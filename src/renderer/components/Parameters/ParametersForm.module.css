@@ -1,0 +1,6 @@
+.form { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+.field { display: flex; flex-direction: column; gap: 0.35rem; }
+.field label { font-size: 0.85rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.field label .range { display: inline; font-size: 0.75rem; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--color-text-secondary); margin-left: 0.35rem; }
+.field input, .field select { padding: 0.45rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); font-size: 0.95rem; }
+.field input[type="checkbox"] { width: 1.2rem; height: 1.2rem; cursor: pointer; }

@@ -1,0 +1,234 @@
+/* Page shell: a vertical stack of the header and the analysis workspace. */
+.page {
+	width: 100%;
+	max-width: none;
+	display: flex;
+	flex-direction: column;
+	gap: 1.1rem;
+}
+
+/* The workspace keeps the original two-column section grid. */
+.workspaceBody {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 1.1rem;
+}
+
+.workspaceHeader {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 1rem;
+	flex-wrap: wrap;
+	padding-bottom: 0.85rem;
+	border-bottom: 1px solid var(--color-border);
+}
+
+.headerMain {
+	display: flex;
+	flex-direction: column;
+	gap: 0.2rem;
+	min-width: 0;
+}
+
+.headerTop {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	flex-wrap: wrap;
+	margin-bottom: 0.15rem;
+}
+
+.headerMeta {
+	margin: 0;
+	font-size: 0.85rem;
+	color: var(--color-text-muted);
+}
+
+.headerActions {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	flex-wrap: wrap;
+}
+
+.backButton {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	padding: 0.4rem 0.8rem;
+	background: transparent;
+	color: var(--color-text);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	font-size: 0.85rem;
+	cursor: pointer;
+	transition: border-color 0.15s, color 0.15s;
+}
+
+.backButton:hover {
+	border-color: var(--color-accent);
+	color: var(--color-accent);
+}
+
+.secondaryButton {
+	padding: 0.45rem 0.9rem;
+	background: var(--color-surface-hover);
+	color: var(--color-text);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	font-size: 0.85rem;
+	cursor: pointer;
+	transition: border-color 0.15s;
+}
+
+.secondaryButton:hover:not(:disabled) {
+	border-color: var(--color-accent);
+}
+
+.secondaryButton:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.title {
+	margin: 0;
+	font-size: 1.35rem;
+}
+
+.warning {
+	margin: 0;
+	padding: 0.7rem 0.95rem;
+	font-size: 0.88rem;
+	border-radius: var(--radius-md);
+	background: color-mix(in srgb, #d29922 12%, var(--color-surface));
+	border: 1px solid #8a6d1f;
+	color: var(--color-text);
+}
+
+.section {
+	padding: 1.2rem;
+	background: var(--color-surface);
+	border-radius: var(--radius-lg);
+	border: 1px solid var(--color-border);
+}
+
+.uploadSection {
+	grid-column: 1 / -1;
+}
+
+.parametersSection {
+	grid-column: 1;
+}
+
+.clusterControlsSection {
+	grid-column: 2;
+}
+
+.resultsSection {
+	grid-column: 1 / -1;
+}
+
+.runInline {
+	margin-top: 1rem;
+	padding-top: 1rem;
+	border-top: 1px solid var(--color-border);
+}
+
+.runInline h3 {
+	margin: 0 0 0.6rem;
+	font-size: 1rem;
+}
+
+.inputRow {
+	display: grid;
+	gap: 0.35rem;
+	margin-bottom: 0.75rem;
+}
+
+.inputRow label {
+	font-size: 0.88rem;
+	color: var(--color-text-muted);
+}
+
+.inputRow input {
+	padding: 0.55rem 0.65rem;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	background: var(--color-bg-elevated, #111);
+	color: var(--color-text);
+}
+
+.resultsHint {
+	margin: 0.45rem 0 0.85rem;
+	font-size: 0.9rem;
+	color: var(--color-text-muted);
+}
+
+.uploadGrid {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 1rem;
+	align-items: start;
+}
+
+.uploadColumn {
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.uploadBlock {
+	margin-top: 1rem;
+}
+
+.uploadBlock h3 {
+	margin: 0 0 0.6rem;
+	font-size: 1rem;
+}
+
+.runButton {
+	margin-top: 1rem;
+	padding: 0.7rem 2rem;
+	background: var(--color-accent);
+	color: #fff;
+	border: none;
+	border-radius: var(--radius-sm);
+	font-size: 1rem;
+	font-weight: 600;
+	cursor: pointer;
+	transition: opacity 0.15s;
+}
+
+.runButton:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.error {
+	color: var(--color-danger);
+	margin-top: 0.5rem;
+	font-size: 0.9rem;
+}
+
+@media (max-width: 1100px) {
+	.workspaceBody {
+		grid-template-columns: 1fr;
+	}
+
+	.uploadSection,
+	.parametersSection,
+	.clusterControlsSection,
+	.resultsSection {
+		grid-column: 1;
+	}
+
+	.uploadGrid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+
+@media (max-width: 700px) {
+	.uploadGrid {
+		grid-template-columns: 1fr;
+	}
+}

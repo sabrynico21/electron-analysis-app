@@ -1,0 +1,447 @@
+/* Two analyses side by side, each with its own colour tint. */
+.view {
+	--tint-a: #6c8cff;
+	--tint-b: #f0a94c;
+	display: flex;
+	flex-direction: column;
+	gap: 1.1rem;
+	min-width: 0;
+}
+
+.viewHeader {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 1rem;
+	flex-wrap: wrap;
+	padding-bottom: 0.85rem;
+	border-bottom: 1px solid var(--color-border);
+}
+
+.viewTitle {
+	margin: 0;
+	font-size: 1.35rem;
+}
+
+.viewSubtitle {
+	margin: 0.2rem 0 0;
+	max-width: 78ch;
+	font-size: 0.85rem;
+	color: var(--color-text-muted);
+}
+
+.closeButton {
+	padding: 0.45rem 0.9rem;
+	background: transparent;
+	color: var(--color-text);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	font-size: 0.85rem;
+	cursor: pointer;
+}
+
+.closeButton:hover {
+	border-color: var(--color-accent);
+	color: var(--color-accent);
+}
+
+.columns {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 1rem;
+	/* Both columns stretch to the same height, so the two analyses are always
+	   read at the same visual level. */
+	align-items: stretch;
+}
+
+.column {
+	display: flex;
+	flex-direction: column;
+	gap: 0.9rem;
+	min-width: 0;
+	padding: 1rem;
+	border-radius: var(--radius-lg);
+	border: 1px solid var(--color-border);
+	background: var(--color-surface);
+}
+
+.tintA {
+	border-color: var(--tint-a);
+	background: color-mix(in srgb, var(--tint-a) 10%, var(--color-surface));
+	box-shadow: inset 4px 0 0 var(--tint-a);
+}
+
+.tintB {
+	border-color: var(--tint-b);
+	background: color-mix(in srgb, var(--tint-b) 10%, var(--color-surface));
+	box-shadow: inset 4px 0 0 var(--tint-b);
+}
+
+.columnHeader {
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+}
+
+/* Badge on the left, run status + "Open analysis" on the right. */
+.columnHeaderTop {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+}
+
+.columnHeaderActions {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+
+.sideBadge {
+	flex: 0 0 auto;
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	padding: 0.1rem 0.5rem;
+	border-radius: 999px;
+}
+
+.tintA .sideBadge {
+	background: var(--tint-a);
+	color: #0b1020;
+}
+
+.tintB .sideBadge {
+	background: var(--tint-b);
+	color: #2a1c05;
+}
+
+.columnTitle {
+	margin: 0;
+	font-size: 1.05rem;
+	color: var(--color-text);
+	overflow-wrap: anywhere;
+}
+
+.columnMeta {
+	margin: 0;
+	font-size: 0.8rem;
+	line-height: 1.5;
+	color: var(--color-text-muted);
+}
+
+.statusPill {
+	font-size: 0.72rem;
+	padding: 0.12rem 0.5rem;
+	border-radius: 999px;
+	background: var(--color-border);
+	color: var(--color-text-muted);
+	white-space: nowrap;
+}
+
+.openButton {
+	padding: 0.3rem 0.65rem;
+	background: transparent;
+	color: var(--color-text);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	font-size: 0.78rem;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.openButton:hover {
+	border-color: var(--color-accent);
+	color: var(--color-accent);
+}
+
+.block {
+	padding-top: 0.75rem;
+	border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+
+.blockTitle {
+	margin: 0 0 0.5rem;
+	font-size: 0.95rem;
+}
+
+.kv {
+	margin: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+}
+
+.kvRow {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 0.75rem;
+	font-size: 0.85rem;
+}
+
+.kvRow dt {
+	color: var(--color-text-muted);
+}
+
+.kvRow dd {
+	margin: 0;
+	text-align: right;
+	overflow-wrap: anywhere;
+}
+
+/* ── Graph areas ────────────────────────────────────────────
+   Two separate areas per column, each with a fixed-height viewport, so an
+   analysis with fewer conditions occupies exactly the same vertical space. */
+.graphs {
+	display: flex;
+	flex-direction: column;
+	gap: 0.9rem;
+	margin-top: auto;
+	padding-top: 0.75rem;
+	border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+
+.graphPanel {
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+	min-width: 0;
+}
+
+.graphPanelTitle {
+	margin: 0;
+	font-size: 0.9rem;
+	color: var(--color-text);
+}
+
+.graphControls {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	min-width: 0;
+}
+
+/* A single, always fully-legible switcher. */
+.graphSelect {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 0.3rem 0.45rem;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	background: var(--color-bg);
+	color: var(--color-text);
+	font-size: 0.8rem;
+}
+
+.graphSelect:disabled {
+	opacity: 0.6;
+}
+
+.nodeLimit {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 0.3rem;
+	font-size: 0.75rem;
+	color: var(--color-text-muted);
+}
+
+.nodeLimit input {
+	width: 58px;
+	padding: 0.25rem 0.3rem;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	background: var(--color-bg);
+	color: var(--color-text);
+}
+
+.expandButton {
+	flex: 0 0 auto;
+	width: 28px;
+	height: 28px;
+	line-height: 1;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	background: var(--color-bg);
+	color: var(--color-text);
+	cursor: pointer;
+}
+
+.expandButton:hover:not(:disabled) {
+	border-color: var(--color-accent);
+	color: var(--color-accent);
+}
+
+.expandButton:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+/* SubgraphPlot renders a wrapper div with its own toolbar; let it fill the
+   fixed-height box and give the plot the remaining space. */
+.plotFill,
+.plotFillLarge {
+	display: flex;
+	flex-direction: column;
+	border-radius: var(--radius-sm);
+	overflow: hidden;
+}
+
+.plotFill {
+	height: 280px;
+}
+
+.plotFillLarge {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.plotFill > div,
+.plotFillLarge > div {
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+}
+
+.plotFill > div > svg,
+.plotFillLarge > div > svg {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.emptyViewport {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	padding: 0.5rem;
+	text-align: center;
+	font-size: 0.8rem;
+	color: var(--color-text-muted);
+	border: 1px dashed var(--color-border);
+	border-radius: var(--radius-sm);
+}
+
+/* Collapsible details: long descriptions stay readable on demand. */
+.viewDetails {
+	font-size: 0.76rem;
+	color: var(--color-text-muted);
+	border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+	border-radius: var(--radius-sm);
+	background: color-mix(in srgb, var(--color-bg) 70%, transparent);
+}
+
+.viewDetails summary {
+	padding: 0.3rem 0.5rem;
+	font-size: 0.78rem;
+	color: var(--color-text);
+	cursor: pointer;
+	overflow-wrap: anywhere;
+}
+
+.viewDetailsBody {
+	max-height: 180px;
+	overflow-y: auto;
+	padding: 0 0.5rem 0.45rem;
+	overflow-wrap: anywhere;
+}
+
+.detailList {
+	margin: 0.3rem 0 0;
+	padding-left: 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.1rem;
+}
+
+/* ── Enlarged overlay ─────────────────────────────────────── */
+.overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 60;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 1.5rem;
+	background: color-mix(in srgb, #000 72%, transparent);
+}
+
+.overlayModal {
+	display: flex;
+	flex-direction: column;
+	gap: 0.6rem;
+	width: min(1400px, 96vw);
+	height: min(900px, 92vh);
+	padding: 1rem;
+	border-radius: var(--radius-lg);
+	border: 1px solid var(--color-border);
+	background: var(--color-surface);
+}
+
+.overlayHeader {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+}
+
+.overlayTitle {
+	font-size: 1rem;
+	font-weight: 600;
+	color: var(--color-text);
+	overflow-wrap: anywhere;
+}
+
+.overlayClose {
+	width: 30px;
+	height: 30px;
+	line-height: 1;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--color-text);
+	cursor: pointer;
+}
+
+.overlayClose:hover {
+	border-color: var(--color-accent);
+	color: var(--color-accent);
+}
+
+.overlayFooter {
+	margin: 0;
+	font-size: 0.8rem;
+	color: var(--color-text-muted);
+	overflow-wrap: anywhere;
+}
+
+.muted {
+	margin: 0;
+	font-size: 0.82rem;
+	color: var(--color-text-muted);
+}
+
+.errorText {
+	margin: 0;
+	font-size: 0.85rem;
+	color: var(--color-danger);
+}
+
+.legendA {
+	color: var(--tint-a);
+	font-weight: 600;
+}
+
+.legendB {
+	color: var(--tint-b);
+	font-weight: 600;
+}
+
+@media (max-width: 1100px) {
+	.columns {
+		grid-template-columns: 1fr;
+	}
+}

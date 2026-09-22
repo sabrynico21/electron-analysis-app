@@ -1,0 +1,82 @@
+.panel { display: grid; gap: 1rem; margin-bottom: 1.5rem; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; }
+.regionCard { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 1rem; }
+.regionHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8rem; }
+.regionHeader h3 { margin: 0; font-size: 1rem; color: var(--color-text); }
+.regionBadge { font-size: 0.72rem; color: var(--color-text-muted); border: 1px solid var(--color-border); border-radius: 999px; padding: 0.2rem 0.5rem; }
+.metricSection { border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0.65rem; background: color-mix(in srgb, var(--color-surface) 92%, var(--color-bg) 8%); margin-bottom: 0.75rem; }
+.metricTitle { margin: 0 0 0.55rem; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-muted); }
+.propsGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.55rem; margin-bottom: 0.65rem; }
+.propBox { border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); padding: 0.5rem; display: grid; gap: 0.2rem; }
+.propBox span { font-size: 0.72rem; color: var(--color-text-muted); }
+.propBox strong { font-size: 1.05rem; color: var(--color-text); }
+.statusRow { display: flex; align-items: center; gap: 0.55rem; margin: 0.35rem 0 0; }
+.statusDot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.status_idle { background: #8b97a5; }
+.status_running { background: #d7a90a; animation: pulse 1s ease-in-out infinite; }
+.status_done { background: #2a8a5a; }
+.status_missing-taxa { background: #b96a14; }
+.status_error { background: #bf2e2e; }
+.statusText { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
+.subgraphSection { margin-top: 1rem; border-top: 1px solid var(--color-border); padding-top: 0.75rem; }
+.subgraphSection h4 { margin: 0 0 0.5rem; font-size: 0.9rem; color: var(--color-text-muted); }
+.viewModeRow { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+.viewModeRow span { font-size: 0.8rem; color: var(--color-text-muted); }
+.viewModeButtons { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
+.viewModeButton { border: 0; border-right: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text-muted); padding: 0.38rem 0.62rem; font-size: 0.8rem; cursor: pointer; }
+.viewModeButton:last-child { border-right: 0; }
+.viewModeButton:hover:enabled { background: color-mix(in srgb, var(--color-bg) 86%, #e9f4ee 14%); color: var(--color-text); }
+.viewModeButtonActive { background: color-mix(in srgb, var(--color-primary) 84%, #f0f8f4 16%); color: #fff; }
+.viewModeButton:disabled { opacity: 0.5; cursor: not-allowed; }
+.controlsRow { display: flex; align-items: flex-start; gap: 1.1rem; margin-bottom: 0.65rem; }
+.nodeLimitControl { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; }
+.viewModeRow { margin-left: auto; }
+.nodeLimitControl label { font-size: 0.82rem; color: var(--color-text-muted); }
+.nodeLimitControl label .range { display: inline; font-size: 0.73rem; font-weight: 400; color: var(--color-text-secondary); margin-left: 0.25rem; }
+.nodeLimitInput { width: 88px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text); padding: 0.35rem 0.45rem; }
+.nodeLimitInput:disabled { opacity: 0.5; cursor: not-allowed; }
+.nodeLimitControl small { color: var(--color-text-muted); font-size: 0.75rem; }
+.warningBox { border: 1px solid color-mix(in srgb, #d4b078 60%, var(--color-border) 40%); color: color-mix(in srgb, #7c4f12 75%, var(--color-text) 25%); background: color-mix(in srgb, var(--color-surface) 86%, #f7e5c8 14%); border-radius: var(--radius-sm); padding: 0.55rem 0.65rem; margin-bottom: 0.65rem; font-size: 0.82rem; }
+.infoText { margin: 0.35rem 0 0; color: var(--color-text-muted); font-size: 0.82rem; }
+.clusterParamsBox { margin-top: 0.8rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); padding: 0.65rem; display: grid; gap: 0.6rem; }
+.clusterParamsBox h4 { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.clusterParamsGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.6rem; }
+.clusterParamField { display: grid; gap: 0.3rem; }
+.clusterParamField label { font-size: 0.78rem; color: var(--color-text-muted); }
+.clusterParamField label .range { display: inline; font-size: 0.7rem; font-weight: 400; color: var(--color-text-secondary); margin-left: 0.25rem; }
+.clusterParamInput { width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); padding: 0.34rem 0.45rem; }
+.rerunButton {
+	justify-self: start;
+	margin-top: 0.35rem;
+	padding: 0.7rem 2rem;
+	background: var(--color-accent);
+	color: #fff;
+	border: none;
+	border-radius: var(--radius-sm);
+	font-size: 1rem;
+	font-weight: 600;
+	cursor: pointer;
+	transition: opacity 0.15s;
+}
+
+.rerunButton:hover:enabled { opacity: 0.9; }
+.rerunButton:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.comparisonSection { margin-top: 0.7rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-surface) 92%, #f0f7f3 8%); padding: 1rem; }
+.comparisonSection h3 { margin: 0 0 0.6rem; font-size: 1rem; }
+.comparisonGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+
+@keyframes pulse {
+	0% { opacity: 1; transform: scale(1); }
+	50% { opacity: 0.55; transform: scale(1.08); }
+	100% { opacity: 1; transform: scale(1); }
+}
+
+@media (max-width: 800px) {
+	.propsGrid { grid-template-columns: 1fr; }
+	.grid { grid-template-columns: 1fr; }
+	.comparisonGrid { grid-template-columns: 1fr; }
+	.viewModeButtons { width: 100%; }
+	.viewModeButton { flex: 1; }
+	.clusterParamsGrid { grid-template-columns: 1fr; }
+}

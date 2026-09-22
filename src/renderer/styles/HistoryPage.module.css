@@ -1,0 +1,276 @@
+/* Two-pane layout: a narrow list on the left, the analysis on the right.
+   The page fills the content pane and never scrolls as a whole: the list and the
+   detail each scroll inside themselves, so dragging the analysis or the
+   comparison leaves both sidebars in place. */
+.page {
+	display: grid;
+	/* The list stays deliberately narrow so the analysis content gets the room. */
+	grid-template-columns: 320px minmax(0, 1fr);
+	/* A definite row height is what lets each pane scroll on its own. */
+	grid-template-rows: minmax(0, 1fr);
+	gap: 1.25rem;
+	height: 100%;
+	overflow: hidden;
+	width: 100%;
+	max-width: none;
+}
+
+.listPane {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+	min-width: 0;
+	min-height: 0;
+	height: 100%;
+	overflow-y: auto;
+	padding-right: 0.25rem;
+}
+
+.listHeader {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 0.5rem;
+}
+
+.listTitle {
+	margin: 0;
+	font-size: 1.25rem;
+}
+
+.listSubtitle {
+	margin: 0.15rem 0 0;
+	font-size: 0.75rem;
+	line-height: 1.4;
+	color: var(--color-text-muted);
+}
+
+.iconButton {
+	flex-shrink: 0;
+	width: 30px;
+	height: 30px;
+	line-height: 1;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--color-text-muted);
+	cursor: pointer;
+}
+
+.iconButton:hover {
+	border-color: var(--color-accent);
+	color: var(--color-accent);
+}
+
+.list {
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	padding: 0;
+	margin: 0;
+}
+
+.item {
+	display: flex;
+	flex-direction: column;
+	gap: 0.45rem;
+	padding: 0.6rem 0.7rem;
+	background: var(--color-surface);
+	border: 1px solid var(--color-border);
+	border-left: 3px solid transparent;
+	border-radius: var(--radius-md);
+	transition: border-color 0.15s, background 0.15s;
+}
+
+.item:hover {
+	border-color: var(--color-accent);
+}
+
+.itemActive {
+	border-left-color: var(--color-accent);
+	background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+}
+
+/* Colour tints matching the two comparison columns. */
+.tintA {
+	border-left-color: #6c8cff;
+	background: color-mix(in srgb, #6c8cff 12%, var(--color-surface));
+}
+
+.tintB {
+	border-left-color: #f0a94c;
+	background: color-mix(in srgb, #f0a94c 12%, var(--color-surface));
+}
+
+.itemBody {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	width: 100%;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.itemName {
+	font-size: 0.9rem;
+	font-weight: 600;
+	color: var(--color-text);
+	overflow-wrap: anywhere;
+}
+
+.itemMeta {
+	display: flex;
+	flex-direction: column;
+	gap: 0.05rem;
+	font-size: 0.72rem;
+	line-height: 1.4;
+	color: var(--color-text-muted);
+}
+
+.itemFooter {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	margin-top: 0.15rem;
+}
+
+.itemParams {
+	font-size: 0.72rem;
+	color: var(--color-text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.itemActions {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+}
+
+.status {
+	font-size: 0.7rem;
+	padding: 0.1rem 0.5rem;
+	border-radius: 999px;
+	background: var(--color-border);
+	color: var(--color-text-muted);
+}
+
+.completed {
+	background: #1a3a2a;
+	color: #3fb950;
+}
+
+.failed {
+	background: #3a1a1a;
+	color: #f85149;
+}
+
+.actionButton,
+.deleteButton,
+.secondaryButton {
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--color-text);
+	padding: 0.25rem 0.5rem;
+	font-size: 0.75rem;
+	cursor: pointer;
+}
+
+.actionButton:hover,
+.secondaryButton:hover {
+	border-color: var(--color-accent);
+	color: var(--color-accent);
+}
+
+.deleteButton {
+	color: #f85149;
+	border-color: #7a2d2d;
+}
+
+.empty {
+	margin: 0;
+	font-size: 0.85rem;
+	color: var(--color-text-muted);
+}
+
+.emptyBox {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	padding: 0.9rem;
+	border: 1px dashed var(--color-border);
+	border-radius: var(--radius-md);
+}
+
+.emptyHint {
+	margin: 0;
+	font-size: 0.78rem;
+	line-height: 1.5;
+	color: var(--color-text-muted);
+}
+
+.errorText {
+	margin: 0;
+	font-size: 0.82rem;
+	color: var(--color-danger);
+}
+
+.detailPane {
+	min-width: 0;
+	min-height: 0;
+	height: 100%;
+	overflow-y: auto;
+}
+
+.placeholder {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 0.6rem;
+	padding: 2rem;
+	background: var(--color-surface);
+	border: 1px dashed var(--color-border);
+	border-radius: var(--radius-lg);
+}
+
+.placeholderTitle {
+	margin: 0;
+	font-size: 1.1rem;
+	color: var(--color-text);
+}
+
+.placeholderText {
+	margin: 0;
+	max-width: 60ch;
+	font-size: 0.88rem;
+	line-height: 1.6;
+	color: var(--color-text-muted);
+}
+
+/* Narrow screens: keep one pane at a time so the analysis stays readable. The
+   page itself becomes the scroller because the panes are stacked. */
+@media (max-width: 1150px) {
+	.page {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: auto;
+		overflow-y: auto;
+	}
+
+	.listPane,
+	.detailPane {
+		height: auto;
+		overflow: visible;
+	}
+
+	.page.detailOpen .listPane {
+		display: none;
+	}
+}

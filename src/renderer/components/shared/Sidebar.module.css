@@ -1,0 +1,7 @@
+.sidebar { width: 200px; flex: 0 0 200px; height: 100%; background: var(--color-bg-dark); display: flex; flex-direction: column; padding: 1rem 0; border-right: 1px solid var(--color-border); overflow-y: auto; }
+.logo { padding: 0 1.25rem 1.5rem; font-weight: 700; font-size: 1.05rem; letter-spacing: 0.02em; color: var(--color-accent); }
+.nav { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.link { display: flex; align-items: center; gap: 0.75rem; padding: 0.65rem 1.25rem; text-decoration: none; color: var(--color-text-muted); border-radius: var(--radius-sm); margin: 0 0.5rem; transition: background 0.12s, color 0.12s; }
+.link:hover { background: var(--color-surface); color: var(--color-text); }
+.active { background: var(--color-surface); color: var(--color-accent) !important; }
+.icon { font-size: 1.1rem; }
