@@ -10,3 +10,8 @@ __pycache__/
 .mypy_cache/
 .coverage
 coverage/
+# Frozen analysis backend and its build scratch space
+python-dist/
+.pyinstaller-build/
+.pyinstaller-venv/
+.pyinstaller-wine/

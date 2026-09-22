@@ -429,7 +429,6 @@ export default function AnalysisWorkspace({
   const isInteractionLocked = isPrimaryRunRunning || isAnyRecomputeRunning
   const canUseRecomputeButtons = !isPrimaryRunRunning
 
-  const canUseSelectedCorrelation = params.correlationMethod !== 'sparcc' || !!sparccStatus?.available
   const canRun = hasInputData
     && metadataRequirementMet
     && allMetadataConditions.length >= 2
@@ -442,7 +441,6 @@ export default function AnalysisWorkspace({
     && !!params.conditionA
     && !!params.conditionB
     && params.conditionA !== params.conditionB
-    && canUseSelectedCorrelation
     && status !== 'running'
     && !isInteractionLocked
 
@@ -768,8 +766,11 @@ export default function AnalysisWorkspace({
               <p className={styles.resultsHint}>Checking SparCC runtime...</p>
             )}
             {params.correlationMethod === 'sparcc' && !isCheckingSparcc && !sparccStatus?.available && (
-              <p className={styles.error}>
-                SparCC runtime is not available. Configure FastSpar in the Settings section.
+              <p className={styles.warning}>
+                FastSpar is not available for {sparccStatus?.platform || 'this platform'}
+                {sparccStatus?.arch ? `/${sparccStatus.arch}` : ''}. The analysis will run with{' '}
+                <strong>Spearman correlation</strong> instead of SparCC, and the substitution is
+                recorded in the log. Configure FastSpar in Settings to use SparCC.
               </p>
             )}
             <button className={styles.runButton} onClick={handleRun} disabled={!canRun}>

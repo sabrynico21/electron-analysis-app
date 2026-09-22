@@ -6,11 +6,13 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [sparccStatus, setSparccStatus] = useState(null)
   const [checkingSparcc, setCheckingSparcc] = useState(false)
+  const [runtimeStatus, setRuntimeStatus] = useState(null)
 
   useEffect(() => {
     window.electronAPI.getSettings().then((loaded) => {
       setSettings((prev) => ({ ...prev, ...(loaded || {}) }))
     })
+    window.electronAPI.getAnalysisRuntimeStatus().then(setRuntimeStatus)
     refreshSparccStatus()
   }, [])
 
@@ -45,10 +47,33 @@ export default function SettingsPage() {
       </p>
 
       <fieldset className={styles.group}>
-        <legend>Python Interpreter</legend>
+        <legend>Analysis Engine</legend>
         <p className={styles.groupHint}>
-          Set Python only if you want to force a specific interpreter. If the field is empty, the app
-          uses auto-detect (the project virtualenv or Python from the PATH).
+          The analysis engine bundles the correlation and clustering code, so no Python
+          installation is needed on this computer.
+        </p>
+        <div className={styles.statusRow}>
+          {runtimeStatus?.kind === 'bundled' ? (
+            <span className={styles.statusOk}>Bundled engine active</span>
+          ) : (
+            <span className={styles.statusError}>
+              System Python ({runtimeStatus?.kind === 'system-python' ? 'fallback' : 'unknown'})
+            </span>
+          )}
+        </div>
+        {runtimeStatus && (
+          <div className={styles.statusDetails}>
+            <div><strong>Platform:</strong> {runtimeStatus.platform} / {runtimeStatus.arch}</div>
+            <div><strong>Engine path:</strong> {runtimeStatus.bundledPath || 'not bundled (development build)'}</div>
+          </div>
+        )}
+      </fieldset>
+
+      <fieldset className={styles.group}>
+        <legend>Python Interpreter (advanced)</legend>
+        <p className={styles.groupHint}>
+          Only used when the bundled engine is missing — normally a development checkout.
+          If the field is empty, the app auto-detects the project virtualenv or Python from the PATH.
         </p>
         <div className={styles.row}>
           <label>Python</label>

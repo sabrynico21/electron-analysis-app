@@ -10,7 +10,7 @@ const crypto = require('crypto')
 const { app, dialog } = require('electron')
 const os = require('os')
 const log = require('electron-log')
-const { getPythonPath, resolveFastsparPath, resolveFastsparCompanions, getSparccRuntimeStatus } = require('./runtimeDetector')
+const { getPythonPath, getBundledBackendPath, getAnalysisRuntimeStatus, resolveFastsparPath, resolveFastsparCompanions, getSparccRuntimeStatus } = require('./runtimeDetector')
 
 class AnalysisManager {
   constructor() {
@@ -25,6 +25,13 @@ class AnalysisManager {
     this.pythonDepsReadyByInterpreter = new Map()
     /** @type {string|null} Interpreter resolved for this session */
     this.pythonInterpreter = null
+    /**
+     * How analyses are executed for this session.
+     * `{ kind: 'frozen', command }` uses the bundled backend (no Python needed);
+     * `{ kind: 'python', command }` falls back to a system interpreter.
+     * @type {{ kind: 'frozen'|'python', command: string }|null}
+     */
+    this.backend = null
     this.cacheDir = path.join(app.getPath('userData'), 'analysis-cache', 'graphs')
     this.cacheIndexPath = path.join(app.getPath('userData'), 'analysis-cache', 'index.json')
     this.resultsDir = path.join(app.getPath('userData'), 'analysis-results')
@@ -217,8 +224,13 @@ class AnalysisManager {
   async _runPythonClustering({ graphData, seedNode, options = {} }) {
     const runId = crypto.randomUUID()
     const inputPath = path.join(os.tmpdir(), `cluster_input_${runId}.json`)
-    const pythonScript = path.join(this._pythonRoot(), 'clustering', 'run_clustering.py')
-    const interpreter = await getPythonPath()
+    const backend = await this._resolveBackend()
+    const args = this._buildBackendArgs(
+      backend,
+      'cluster',
+      path.join('clustering', 'run_clustering.py'),
+      ['--input', inputPath]
+    )
 
     const payload = {
       graphData,
@@ -232,7 +244,7 @@ class AnalysisManager {
     await fs.writeFile(inputPath, JSON.stringify(payload), 'utf-8')
 
     return new Promise((resolve, reject) => {
-      const proc = spawn(interpreter, [pythonScript, '--input', inputPath])
+      const proc = spawn(backend.command, args)
       let stdout = ''
       let stderr = ''
 
@@ -422,6 +434,53 @@ class AnalysisManager {
   }
 
   /**
+   * Decide how the analysis code will be executed for this session.
+   *
+   * Preference order:
+   *  1. the frozen backend shipped with the application — nothing to install,
+   *     no dependency resolution, no network access on first run;
+   *  2. the system Python interpreter (development checkouts, or a package built
+   *     without the backend), which may need a private virtualenv with scipy.
+   *
+   * @param {(line: string) => void} emitLog
+   * @returns {Promise<{ kind: 'frozen'|'python', command: string }>}
+   */
+  async _resolveBackend(emitLog = () => {}) {
+    if (this.backend) return this.backend
+
+    const bundled = getBundledBackendPath()
+    if (bundled) {
+      log.info(`Using bundled analysis backend: ${bundled}`)
+      emitLog('Using the bundled analysis engine (no Python installation required).')
+      this.backend = { kind: 'frozen', command: bundled }
+      return this.backend
+    }
+
+    const interpreter = await this._resolvePythonInterpreter(emitLog)
+    this.backend = { kind: 'python', command: interpreter }
+    return this.backend
+  }
+
+  /**
+   * Translate a logical backend invocation into concrete spawn arguments.
+   *
+   * The frozen executable exposes sub-commands (`analyze`, `cluster`), while a
+   * plain interpreter needs the script path followed by its own arguments.
+   *
+   * @param {{ kind: 'frozen'|'python', command: string }} backend
+   * @param {string} subcommand
+   * @param {string} scriptRelativePath Path inside `python/` for the interpreter case
+   * @param {string[]} scriptArgs
+   * @returns {string[]}
+   */
+  _buildBackendArgs(backend, subcommand, scriptRelativePath, scriptArgs) {
+    if (backend.kind === 'frozen') {
+      return [subcommand, ...scriptArgs]
+    }
+    return [path.join(this._pythonRoot(), scriptRelativePath), ...scriptArgs]
+  }
+
+  /**
    * Run an analysis job.
    *
    * `payload.jobId` may be supplied to re-run an existing history entry: the new
@@ -441,11 +500,8 @@ class AnalysisManager {
     const jobId = requestedJobId || crypto.randomUUID()
     const { scriptName, files, params } = payload
 
-    // Write params to a temp JSON file so the script can read them
+    // The backend reads its inputs from a temp JSON file (see the write below).
     const paramsPath = path.join(require('os').tmpdir(), `params_${jobId}.json`)
-    await fs.writeFile(paramsPath, JSON.stringify({ files, params, jobId }))
-
-    const scriptPath = path.join(this._pythonRoot(), scriptName)
 
     const requestedMethod = (params?.correlationMethod || 'spearman').toLowerCase()
     if (requestedMethod === 'sparcc') {
@@ -455,28 +511,50 @@ class AnalysisManager {
         : { fastspar_bootstrap: '', fastspar_pvalues: '' }
       const missing = ['fastspar_bootstrap', 'fastspar_pvalues'].filter((name) => !companions[name])
       if (!resolved.available || missing.length > 0) {
+        // FastSpar binaries are bundled for Windows and Linux on x64 only, so
+        // macOS and ARM users cannot run SparCC out of the box. Instead of
+        // dead-ending the run, continue with Spearman and say so explicitly: the
+        // substitution is written to the log and to the stored parameters, so the
+        // provenance of the results stays traceable.
         const detail = missing.length > 0
-          ? `missing companion binaries: ${missing.join(', ')}`
-          : 'fastspar binary not found'
-        throw new Error(
-          `SparCC requires the FastSpar runtime (${detail}). ` +
-          'Configure FastSpar in Settings or ship bundled binaries under resources/bin/<platform>/<arch>/.'
-        )
+          ? `FastSpar companion binaries are missing (${missing.join(', ')})`
+          : 'the FastSpar binary was not found'
+        params.correlationMethod = 'spearman'
+        params.correlationFallback = {
+          requested: 'sparcc',
+          used: 'spearman',
+          reason: `${detail} for ${process.platform}/${process.arch}`,
+        }
+        onLog({
+          jobId,
+          level: 'warn',
+          line: `[warn] ${detail} for ${process.platform}/${process.arch}. Running the analysis with Spearman correlation instead of SparCC.`,
+        })
+      } else {
+        params.fastsparPath = resolved.path
       }
-      params.fastsparPath = resolved.path
     }
-    const interpreter = await this._resolvePythonInterpreter((line) => onLog({ jobId, line }))
 
-    const args = [scriptPath, '--params', paramsPath]
+    // Serialize only now: the SparCC branch above injects the resolved FastSpar
+    // path (or downgrades the method to Spearman), and the analysis script reads
+    // the file, so writing it earlier would silently drop `fastsparPath`.
+    await fs.writeFile(paramsPath, JSON.stringify({ files, params, jobId }))
+
+    const backend = await this._resolveBackend((line) => onLog({ jobId, line }))
+    const resultPath = path.join(os.tmpdir(), `result_${jobId}.json`)
+    const args = this._buildBackendArgs(backend, 'analyze', scriptName, [
+      '--params', paramsPath,
+      '--output', resultPath,
+    ])
 
     log.info(
-      `[Job ${jobId}] Starting python analysis: ${scriptName} ` +
-      `(interpreter: ${interpreter}, script: ${scriptPath})`
+      `[Job ${jobId}] Starting analysis: ${scriptName} ` +
+      `(backend: ${backend.kind}, command: ${backend.command})`
     )
     onProgress({ jobId, status: 'running', percent: 0 })
 
     return new Promise((resolve, reject) => {
-      const proc = spawn(interpreter, args)
+      const proc = spawn(backend.command, args)
       this.activeJobs.set(jobId, proc)
       let stderr = ''
 
@@ -506,7 +584,6 @@ class AnalysisManager {
         this.activeJobs.delete(jobId)
         if (code === 0) {
           try {
-            const resultPath = path.join(require('os').tmpdir(), `result_${jobId}.json`)
             const raw = await fs.readFile(resultPath, 'utf-8')
             const parsed = JSON.parse(raw)
             const { graphRefs } = await this._persistConditionGraphs(jobId, payload, parsed)
@@ -549,6 +626,7 @@ class AnalysisManager {
           reject(new Error(message))
         }
         await fs.unlink(paramsPath).catch(() => {})
+        await fs.unlink(resultPath).catch(() => {})
       })
 
       proc.on('error', (err) => {
@@ -763,6 +841,13 @@ class AnalysisManager {
 
   getSparccRuntimeStatus({ customFastsparPath = '' } = {}) {
     return getSparccRuntimeStatus({ customPath: customFastsparPath })
+  }
+
+  /**
+   * Whether analyses run on the bundled engine or need a system Python install.
+   */
+  getAnalysisRuntimeStatus() {
+    return getAnalysisRuntimeStatus()
   }
 }
 

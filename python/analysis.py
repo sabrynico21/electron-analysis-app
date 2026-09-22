@@ -41,7 +41,10 @@ def _detect_delimiter(header_line: str) -> str:
 
 
 def _read_table_rows(file_path: str) -> list:
-    with open(file_path, 'r', newline='') as handle:
+    # Windows defaults to the ANSI codepage, and Excel exports usually carry a BOM:
+    # utf-8-sig handles both without mangling the first column name. `errors`
+    # degrades gracefully instead of aborting the whole analysis on one bad byte.
+    with open(file_path, 'r', newline='', encoding='utf-8-sig', errors='replace') as handle:
         first_line = handle.readline()
         if not first_line:
             return []
@@ -182,7 +185,7 @@ def _compute_spearman(x_values: list, y_values: list) -> tuple[float, float]:
 def _write_counts_tsv(path: str, samples: list[str], features: list[str], matrix_by_sample: dict) -> None:
     # FastSpar requires the classic BIOM TSV format: the first header cell must be
     # '#OTU ID', each row is an OTU (feature) and each column is a sample.
-    with open(path, 'w', newline='') as handle:
+    with open(path, 'w', newline='', encoding='utf-8') as handle:
         writer = csv.writer(handle, delimiter='\t')
         writer.writerow(['#OTU ID'] + samples)
         for feature in features:
@@ -195,7 +198,7 @@ def _write_counts_tsv(path: str, samples: list[str], features: list[str], matrix
 
 
 def _read_square_matrix_tsv(path: str) -> tuple[list[str], dict]:
-    with open(path, 'r', newline='') as handle:
+    with open(path, 'r', newline='', encoding='utf-8') as handle:
         reader = csv.reader(handle, delimiter='\t')
         rows = [row for row in reader if row]
 
@@ -281,6 +284,8 @@ def _run_and_stream(command: list, label: str, quiet: bool = False) -> tuple[int
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding='utf-8',          # Windows would otherwise decode as ANSI
+        errors='replace',
         bufsize=1,
     )
     tail_lines: list = []
@@ -815,9 +820,9 @@ def _build_same_domain_pairs(
 
 def _write_pairs_csv(job_id: str, condition: str, rows: list) -> str:
     file_name = f"corr_pairs_{job_id}_{_slug(condition)}.csv"
-    output_path = os.path.join(os.environ.get('TMPDIR', '/tmp'), file_name)
+    output_path = os.path.join(tempfile.gettempdir(), file_name)
     fieldnames = ['row', 'column', 'cor', 'p']
-    with open(output_path, 'w', newline='') as csv_file:
+    with open(output_path, 'w', newline='', encoding='utf-8') as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
@@ -1199,9 +1204,14 @@ def run(job_id: str, files: dict, params: dict) -> dict:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--params", required=True, help="Path to params JSON file")
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Where to write the result JSON. Defaults to the OS temporary directory.",
+    )
     args = parser.parse_args()
 
-    with open(args.params, "r") as f:
+    with open(args.params, "r", encoding="utf-8") as f:
         payload = json.load(f)
 
     job_id = payload["jobId"]
@@ -1211,8 +1221,12 @@ def main():
     try:
         result = run(job_id, files, params)
 
-        result_path = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"result_{job_id}.json")
-        with open(result_path, "w") as f:
+        # The caller may hand us an explicit destination; otherwise fall back to
+        # the portable temp directory (`/tmp` is not a valid path on Windows).
+        result_path = args.output or os.path.join(
+            tempfile.gettempdir(), f"result_{job_id}.json"
+        )
+        with open(result_path, "w", encoding="utf-8") as f:
             json.dump(result, f)
 
         log(f"Results written to {result_path}")

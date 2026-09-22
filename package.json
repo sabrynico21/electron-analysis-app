@@ -11,10 +11,12 @@
     "dev:renderer": "vite",
     "dev:main": "cross-env NODE_ENV=development nodemon --exec electron . --watch src/main",
     "build:renderer": "vite build",
-    "build": "npm run build:renderer && electron-builder",
-    "build:win": "npm run build:renderer && electron-builder --win",
-    "build:mac": "npm run build:renderer && electron-builder --mac",
-    "build:linux": "npm run build:renderer && electron-builder --linux",
+    "build:backend": "node scripts/build-backend.mjs",
+    "build": "npm run build:renderer && npm run build:backend && electron-builder",
+    "build:app": "npm run build:renderer && electron-builder",
+    "build:win": "npm run build:renderer && node scripts/build-backend.mjs --target win32 && cross-env WINEDLLOVERRIDES=mscoree,mshtml= electron-builder --win",
+    "build:mac": "npm run build:renderer && node scripts/build-backend.mjs --target darwin && electron-builder --mac",
+    "build:linux": "npm run build:renderer && node scripts/build-backend.mjs --target linux && electron-builder --linux",
     "icons": "node scripts/generate-icons.js",
     "test": "jest tests/unit --passWithNoTests",
     "test:unit": "jest tests/unit",
@@ -73,12 +75,8 @@
     ],
     "extraResources": [
       {
-        "from": "resources/bin",
-        "to": "bin"
-      },
-      {
-        "from": "python",
-        "to": "python"
+        "from": "python-dist",
+        "to": "python-dist"
       }
     ],
     "win": {
@@ -90,7 +88,13 @@
           ]
         }
       ],
-      "icon": "resources/icons/icon.ico"
+      "icon": "resources/icons/icon.ico",
+      "extraResources": [
+        {
+          "from": "resources/bin/win32",
+          "to": "bin/win32"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -108,7 +112,13 @@
         }
       ],
       "icon": "resources/icons/icon.icns",
-      "category": "public.app-category.education"
+      "category": "public.app-category.education",
+      "extraResources": [
+        {
+          "from": "resources/bin/darwin",
+          "to": "bin/darwin"
+        }
+      ]
     },
     "linux": {
       "target": [
@@ -116,6 +126,12 @@
       ],
       "icon": "resources/icons/icon.png",
       "category": "Science",
+      "extraResources": [
+        {
+          "from": "resources/bin/linux",
+          "to": "bin/linux"
+        }
+      ],
       "syncDesktopName": true
     }
   },

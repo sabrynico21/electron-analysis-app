@@ -229,6 +229,7 @@ function setupIpcHandlers() {
       customFastsparPath: settings.fastsparPath || '',
     })
   })
+  ipcMain.handle('analysis:runtimeStatus', () => analysisManager.getAnalysisRuntimeStatus())
 }
 
 module.exports = { setupIpcHandlers }

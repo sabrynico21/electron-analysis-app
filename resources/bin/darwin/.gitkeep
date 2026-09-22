@@ -1,0 +1,2 @@
+Keeps this folder in git so the macOS packaging config always has a source path.
+FastSpar binaries for macOS still have to be built and dropped in x64/ and arm64/.

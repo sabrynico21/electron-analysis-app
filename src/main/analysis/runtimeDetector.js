@@ -47,6 +47,55 @@ function _wellKnownPythonCandidates() {
   return ['/usr/bin/python3', '/usr/local/bin/python3', '/bin/python3']
 }
 
+function _backendExecutableName() {
+  return process.platform === 'win32' ? 'analysis-backend.exe' : 'analysis-backend'
+}
+
+/**
+ * Path of the frozen analysis backend produced by `npm run build:backend`.
+ *
+ * Packaged installs ship it through electron-builder's `extraResources`, which
+ * is what removes the need for a Python interpreter on the user's machine. A
+ * `null` result means "not bundled", and the caller falls back to the system
+ * interpreter (development checkouts, or a build made without the backend).
+ * @returns {string|null}
+ */
+function getBundledBackendPath() {
+  const baseName = _backendExecutableName()
+  const roots = app.isPackaged
+    ? [path.join(process.resourcesPath || '', 'python-dist')]
+    : [path.join(app.getAppPath(), 'python-dist')]
+
+  for (const root of roots) {
+    const candidate = path.join(root, 'analysis-backend', baseName)
+    if (!fs.existsSync(candidate)) continue
+
+    const check = _ensureExecutable(candidate)
+    if (!check.ok) {
+      console.warn(`Bundled analysis backend at ${candidate} is unusable: ${check.error}`)
+      continue
+    }
+    return candidate
+  }
+
+  return null
+}
+
+/**
+ * Describes how analyses will be executed: with the bundled backend, or with
+ * the Python interpreter found on the system.
+ */
+function getAnalysisRuntimeStatus() {
+  const bundledPath = getBundledBackendPath()
+  return {
+    kind: bundledPath ? 'bundled' : 'system-python',
+    bundledPath: bundledPath || '',
+    requiresPythonInstallation: !bundledPath,
+    platform: process.platform,
+    arch: process.arch,
+  }
+}
+
 async function getPythonPath() {
   const custom = store.get('pythonPath')
   if (custom && fs.existsSync(custom)) return custom
@@ -218,4 +267,11 @@ function getSparccRuntimeStatus(options = {}) {
   }
 }
 
-module.exports = { getPythonPath, resolveFastsparPath, resolveFastsparCompanions, getSparccRuntimeStatus }
+module.exports = {
+  getPythonPath,
+  getBundledBackendPath,
+  getAnalysisRuntimeStatus,
+  resolveFastsparPath,
+  resolveFastsparCompanions,
+  getSparccRuntimeStatus,
+}

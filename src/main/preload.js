@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   getSparccStatus: () => ipcRenderer.invoke('sparcc:status'),
+  getAnalysisRuntimeStatus: () => ipcRenderer.invoke('analysis:runtimeStatus'),
 
   // Cleanup
   removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel),

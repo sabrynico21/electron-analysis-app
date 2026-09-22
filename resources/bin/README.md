@@ -2,6 +2,11 @@
 
 Place FastSpar executables in platform/architecture folders before packaging release builds.
 
+Only the folder matching the platform being packaged is shipped
+(`resources/bin/<platform>` is copied to `bin/<platform>` inside the app), so a Windows
+installer does not carry the Linux binaries and vice versa. The runtime looks them up at
+`resources/bin/<platform>/<arch>/` (= `bin/<platform>/<arch>/` once installed).
+
 FastSpar's permutation p-values need **three** executables per platform: `fastspar`
 (correlation), `fastspar_bootstrap` (generates permuted count tables) and
 `fastspar_pvalues` (computes p-values from the bootstrap correlations).
@@ -25,6 +30,11 @@ Required files:
 - `win32/x64/fastspar_pvalues.exe`
 
 Ensure Linux/macOS binaries are executable (`chmod +x`).
+
+Currently only `linux/x64` and `win32/x64` are populated. On macOS and on ARM
+Linux the app detects the missing runtime, warns the user and runs the comparison
+with Spearman correlation instead. Populating the remaining folders removes that
+fallback.
 
 ## Building
 
