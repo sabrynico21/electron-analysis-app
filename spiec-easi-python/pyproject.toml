@@ -1,0 +1,107 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spiec-easi-python"
+version = "0.1.0"
+description = "Python implementation of SPIEC-EASI MB (Meinshausen-Buhlmann) with StARS"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "SPIEC-EASI Python Contributors" }
+]
+keywords = ["microbiome", "network-inference", "compositional-data", "spiec-easi", "stars"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Scientific/Engineering :: Bio-Informatics"
+]
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "scikit-learn>=1.3",
+  "pandas>=2.0",
+  "networkx>=3.1",
+  "joblib>=1.3"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "rpy2>=3.5",
+  "black>=24.0",
+  "ruff>=0.6.0",
+  "mypy>=1.10",
+  "types-networkx"
+]
+viz = [
+  "matplotlib>=3.7",
+  "python-igraph>=0.11"
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/spiec-easi-python"
+Repository = "https://github.com/your-org/spiec-easi-python"
+Issues = "https://github.com/your-org/spiec-easi-python/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spieceasi"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/spieceasi/py.typed" = "spieceasi/py.typed"
+
+[tool.black]
+line-length = 88
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "W"]
+# Matrix-style names (X, A) are conventional in this scientific codebase.
+ignore = ["N803", "N806"]
+
+[tool.mypy]
+# 3.12 is the minimum target whose third-party stubs (numpy) parse cleanly;
+# this package itself remains importable on 3.10+ via `from __future__ import annotations`.
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+
+# Scientific-stack packages without bundled type information (plus the optional
+# `igraph` viz extra). Treated as Any so mypy focuses on this package's own code.
+[[tool.mypy.overrides]]
+module = [
+  "pandas",
+  "joblib",
+  "sklearn.linear_model",
+  "sklearn.pipeline",
+  "sklearn.preprocessing",
+  "igraph",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Heavy end-to-end parity tests (full warm-started StARS over every subsample,
+# R-lasso golden comparisons) are marked `slow` and excluded by default; run
+# them explicitly with `pytest -m slow`.
+addopts = "-m 'not slow'"
+markers = [
+  "r_validation: tests that compare against the R SpiecEasi implementation",
+  "slow: long-running statistical validation and benchmark-oriented tests"
+]

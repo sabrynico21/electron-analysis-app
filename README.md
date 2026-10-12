@@ -1,11 +1,11 @@
 # Microbiome Co-occurrence Network Analysis
 
-Desktop application for microbial co-occurrence network analysis from abundance tables (bacteria, fungi, or both), designed for users who want a graphical workflow instead of writing code.
+Desktop application for microbial co-occurrence network analysis from abundance tables (bacteria, fungi, or both), designed for users who want a graphical workflow.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Electron](https://img.shields.io/badge/Electron-44-47848F.svg)](https://www.electronjs.org/)
 
-- Compute taxa correlations with **Spearman** or **SparCC** (compositional-aware).
+- Compute taxa correlations with **Spearman**, **SparCC** or **SPIEC-EASI (MB)**.
 - Build condition-specific co-occurrence networks and compare two conditions.
 - Analyse bacteria-only, fungi-only, or cross-domain bacteria-fungi relations.
 - Explore the networks interactively and run seed-based community detection.
@@ -14,12 +14,9 @@ Desktop application for microbial co-occurrence network analysis from abundance 
 
 ## Getting started
 
-Everything in this section is meant for the person who will actually use the app. No
-programming knowledge is needed: it is a download, a double click, and a form to fill in.
-
 ### Step 1 — Download the right file
 
-The installers are **not** in the source tree: they live on the **Releases** page, which
+The installers live on the **Releases** page, which
 is the only place you need to look.
 
 **https://github.com/sabrynico21/electron-analysis-app/releases/latest**
@@ -106,8 +103,9 @@ S3       12     3      11
 **Metadata** (CSV or TSV)
 
 - The first column holds the sample names, spelled exactly as in the abundance table.
-- It must contain a column named `Combination_treat2` with the condition of each
-  sample (for example `Control` / `Treated`).
+- It must contain a column with the condition of each sample (for example
+  `Control` / `Treated`). By default this is `Combination_treat2`, but you can pick any
+  other column from the **Condition column** parameter (see below).
 - At least **two different values** are required, because the analysis compares two
   conditions.
 
@@ -130,11 +128,19 @@ samples per condition are recommended.
    drop areas, or use the file picker.
 3. **Fill in the parameters**:
    - *Dataset type* — bacteria, fungi, or both.
-   - *Correlation method* — **Spearman** is the safe default; **SparCC** is the
-     compositional-aware alternative (see [About SparCC](#about-sparcc)).
+   - *Correlation method* — **Spearman** is the safe default; **SparCC** and
+     **SPIEC-EASI (MB)** are compositional-aware alternatives (see
+     [About SparCC](#about-sparcc)).
    - *Grouping mode* — `all`, or restrict to a `phylum` / `genus` level.
    - *P-value threshold* — `0.05` is the usual choice.
-   - *Condition A* / *Condition B* — the two `Combination_treat2` values to compare.
+   - *Correlation filter · min |r|* — `0` keeps every significant edge; raise it to
+     keep only strong edges. It works on the **absolute** value, so it filters weak
+     positive and weak negative edges at the same time.
+   - *Condition column* — the metadata column the conditions are read from. It lists
+     the columns shared by all loaded metadata files; pick the one holding the
+     experimental condition (defaults to `Combination_treat2`).
+   - *Condition A* / *Condition B* — the two values of the chosen condition column to
+     compare.
 4. **Start the analysis** and watch the progress bar. Every step is written to the log
    panel; the **Full log** button shows the complete output.
 5. **Read the results**: a summary, the table of significant pairs, one network per
@@ -143,6 +149,39 @@ samples per condition are recommended.
 
 Each run is archived automatically under **History**, where you can reopen it, change
 the parameters and re-run it, or compare two runs side by side.
+
+#### Downloadable tables
+
+Under the cluster graphs (both in a single analysis and in the comparison view) each
+figure has a **Download CSV** button and a **Show table** toggle that reveals a preview
+below the button. The available tables are:
+
+| Table | What it contains |
+| --- | --- |
+| Full condition graph | every edge of the condition graph with its correlation value |
+| Cluster | the edges of the cluster subgraph with the correlation value of each edge |
+| Intersection | edges shared by the two clusters, with the correlation value **of each condition** (an edge with opposite signs keeps both values) |
+| Complement | edges present in exactly one cluster |
+| Only in … | edges exclusive to one condition |
+| Nodes present in only one condition | for each node in exactly one cluster, whether it is missing only from the other *cluster* or from the other condition *graph* entirely |
+
+#### How the comparison graphs are built
+
+- **Intersection** — two nodes are connected when the same pair appears in both
+  clusters. If the correlation has the **same sign** in both conditions the edge is a
+  solid line (red = positive, blue = negative); if the sign is **opposite** the edge is
+  drawn **dashed**, with a colour that encodes the direction of the flip:
+  - **dark red** = positive in the first condition, negative in the second;
+  - **dark blue** = negative in the first condition, positive in the second.
+
+  A small legend under the graph explains all four cases.
+- **Only in <condition>** — the nodes that belong to one cluster but not to the other,
+  plus the edges between those exclusive nodes. This is the same set as the
+  *"Without intersection"* switch on each cluster card, so it is downloadable right
+  below the cluster table.
+- **Complement** — the union of the two clusters minus the intersection (on node
+  pairs): nodes shared by both clusters are dropped, and so are the edges attached to
+  them.
 
 ### About SparCC
 
@@ -155,6 +194,38 @@ Linux on x64 only.
   analysis log, so the provenance of the numbers stays clear.
 - If you really need SparCC on macOS, install FastSpar yourself and point the app at it
   in **Settings → FastSpar path**.
+
+### About SPIEC-EASI (MB)
+
+- SPIEC-EASI (MB) is implemented directly in Python in this app (no R required).
+- It performs graph selection via neighborhood regression + StARS, then exports the
+  selected edges as correlation-like weights.
+- Practical recommendation: SPIEC-EASI MB is often used also when taxa > samples,
+  but results can be less stable in very high-dimensional settings; prevalence/abundance
+  filtering and taxa grouping are usually recommended.
+
+#### Parameters currently used in this app
+
+Current integration defaults for SPIEC-EASI MB:
+
+- `spieceasiNLambdas`: `25`
+- `spieceasiLambdaMinRatio`: `0.01`
+- `spieceasiNSubsamples`: `20`
+- `spieceasiStarsThreshold`: `0.05`
+- `spieceasiMaxIter`: `10000`
+- `spieceasiJobs`: `min(4, cpu_count)` (at least `1`)
+- Fixed pipeline settings: `subsample_fraction=0.8`, `sym_rule="or"`, `random_state=17`
+
+Runtime behavior implemented by the app:
+
+- Constant/all-zero taxa are removed before fitting.
+- The run is skipped if fewer than 4 samples or fewer than 2 varying taxa remain.
+- For very small and high-dimensional datasets (`n_samples <= 10` and
+  `n_taxa >= 200`), if the user did not explicitly override them, defaults are
+  automatically reduced to keep execution practical:
+  - `spieceasiNLambdas <= 10`
+  - `spieceasiNSubsamples <= 8`
+  - `spieceasiMaxIter <= 3000`
 
 ### Where your results live
 
@@ -176,8 +247,8 @@ uploaded anywhere; copy that folder to back up your history.
 | A blue **"Windows protected your PC"** box | Expected for an unsigned app. *More info* → *Run anyway*. |
 | macOS refuses to open the app | Right-click the app → *Open* → *Open* (first time only). |
 | "SparCC unavailable" warning | Expected on macOS/ARM. The run continues with Spearman. |
-| The metadata file is rejected | The column must be named exactly `Combination_treat2`. |
-| The network is empty or very sparse | Relax the p-value threshold (try `0.1`), or add samples per condition. |
+| The metadata file is rejected | The selected *Condition column* must exist in every metadata file. It defaults to `Combination_treat2`. |
+| The network is empty or very sparse | Relax the p-value threshold (try `0.1`), lower the correlation filter (min \|r\|), or add samples per condition. |
 | A condition is skipped | Fewer than 3 samples, or fewer than 2 taxa shared with the other condition. |
 
 ## Current limitations
@@ -314,49 +385,6 @@ it is skipped unless asked for explicitly. The harness always uses an isolated
 To inspect the app visually on a headless machine, install `xvfb` and `x11vnc`, start them
 on a virtual display and run `electron .` there — the application itself needs no container.
 
-### Publishing a release
-
-Installers are **never committed to git**: they are 150–200 MB binaries and `release/`
-is git-ignored. They belong to a GitHub *Release* instead, so users get a plain download
-link and the repository stays small.
-
-```bash
-npm run build:linux     # -> release/electron-analysis-app-<version>-linux-x86_64.AppImage
-npm run build:win       # -> release/electron-analysis-app-<version>-win-x64.exe
-```
-
-Then create a release for the version in `package.json`, tag it (`v1.0.0`) and attach
-the files listed above as assets. Either do it from the GitHub web UI
-(*Releases* → *Draft a new release* → drag the files into the assets box), or with the
-GitHub CLI:
-
-```bash
-gh release create v1.0.0 \
-  release/electron-analysis-app-1.0.0-win-x64.exe \
-  release/electron-analysis-app-1.0.0-linux-x86_64.AppImage \
-  --title "1.0.0" --notes "First public release."
-```
-
-The `blockmap` and `latest*.yml` files are only needed if you later enable automatic
-updates; they can be ignored for a manual release.
-
-Each artifact must be built **on its own platform** — see the wine note below for
-Windows, and note that macOS packages can only be produced on a Mac.
-
-### Building the Windows package on Linux/macOS
-
-`npm run build:win` needs `wine` (on Arch: `sudo pacman -S wine`). Failures here are
-almost always about the wine prefix rather than the project:
-
-- `could not load kernel32.dll, status c0000135` — the default `~/.wine` prefix was left
-  half-initialised, for example by an interrupted first run. Delete it and let it rebuild
-  from scratch: `rm -rf ~/.wine && wineboot -u`.
-- Wine waits forever on a dialog offering to install Mono/Gecko. electron-builder builds a
-  temporary installer (~570 KB, this is not a broken artifact) and runs it under wine to
-  generate the uninstaller, so the prefix must be complete before packaging. `build:win`
-  sets `WINEDLLOVERRIDES=mscoree,mshtml=` to keep this non-interactive; set it yourself if
-  you call `electron-builder` directly.
-- Do not pipe a long build through `tail`: it hides the real error until the very end.
 
 ### Important packaging constraints
 
@@ -366,9 +394,6 @@ almost always about the wine prefix rather than the project:
   `bin/<platform>`), so a Windows installer does not carry the Linux binaries.
 - The engine is rebuilt for the platform being packaged, so `python-dist/` never
   mixes two platforms.
-- Windows packages can be produced from Linux/macOS (see the section above); macOS
-  packages only from macOS.
-- Build output is written to `release/`.
 
 ## License
 

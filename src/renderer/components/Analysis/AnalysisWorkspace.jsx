@@ -21,13 +21,15 @@ import SeedSelector from '../Results/SeedSelector'
 import { useAnalysis } from '../../hooks/useAnalysis'
 import { useAnalysisStore } from '../../store/analysisStore'
 import { useResultsStore } from '../../store/resultsStore'
-import { dedupeDescriptors, describePaths, parseMetadataConditions, toPathList } from '../../utils/fileLoading'
+import { dedupeDescriptors, describePaths, parseMetadataColumns, parseMetadataConditions, toPathList, METADATA_CONDITION_COLUMN } from '../../utils/fileLoading'
 import styles from '../../styles/AnalysisPage.module.css'
 
 const DEFAULT_PARAMS = {
   correlationMethod: 'spearman',
   groupingMode: 'all',
   pValueThreshold: 0.05,
+  correlationThreshold: 0,
+  conditionColumn: METADATA_CONDITION_COLUMN,
 }
 
 const TELEPORT_MIN = 0
@@ -88,6 +90,7 @@ export default function AnalysisWorkspace({
   const [fungiMetadataConditions, setFungiMetadataConditions] = useState([])
   const [bacteriaMetadataError, setBacteriaMetadataError] = useState('')
   const [fungiMetadataError, setFungiMetadataError] = useState('')
+  const [metadataColumns, setMetadataColumns] = useState([])
   const [params, setParams] = useState(DEFAULT_PARAMS)
   const [analysisJobId, setAnalysisJobId] = useState(isHistory ? jobId : '')
   const [isBootstrapping, setIsBootstrapping] = useState(isHistory)
@@ -131,6 +134,7 @@ export default function AnalysisWorkspace({
     setFungiMetadataConditions([])
     setBacteriaMetadataError('')
     setFungiMetadataError('')
+    setMetadataColumns([])
     setParams(DEFAULT_PARAMS)
     setSelectedTaxa('')
     setTaxaSearch('')
@@ -216,24 +220,36 @@ export default function AnalysisWorkspace({
   useEffect(() => {
     let cancelled = false
 
-    const parseAll = async (fileList) => {
+    const parseAll = async (fileList, column) => {
       const conditions = new Set()
+      const columnSets = []
       let firstError = ''
       for (const file of fileList) {
         try {
-          const parsed = await parseMetadataConditions(file.path)
+          const fileColumns = await parseMetadataColumns(file.path)
+          columnSets.push(fileColumns)
+          const parsed = await parseMetadataConditions(file.path, column)
           parsed.forEach((condition) => conditions.add(condition))
         } catch (err) {
           if (!firstError) firstError = `${file.name}: ${err.message}`
         }
       }
-      return { conditions: [...conditions], error: firstError }
+      return { conditions: [...conditions], columnSets, error: firstError }
     }
 
     const sync = async () => {
-      const bacteria = await parseAll(bacteriaMetadataFiles)
-      const fungi = await parseAll(fungiMetadataFiles)
+      const column = params.conditionColumn || METADATA_CONDITION_COLUMN
+      const bacteria = await parseAll(bacteriaMetadataFiles, column)
+      const fungi = await parseAll(fungiMetadataFiles, column)
       if (cancelled) return
+
+      // Offer only columns present in every metadata file so the selection is
+      // guaranteed to be resolvable when the analysis builds the condition pairs.
+      const columnSets = [...bacteria.columnSets, ...fungi.columnSets]
+      const availableColumns = columnSets.length
+        ? columnSets.reduce((acc, set) => acc.filter((name) => set.includes(name)), columnSets[0])
+        : []
+      setMetadataColumns(availableColumns)
 
       setBacteriaMetadataConditions(bacteria.conditions)
       setBacteriaMetadataError(bacteria.error)
@@ -260,8 +276,8 @@ export default function AnalysisWorkspace({
     return () => {
       cancelled = true
     }
-    // Re-derive only when the set of metadata files actually changes.
-  }, [metadataPathsKey])
+    // Re-derive when the metadata files or the chosen condition column change.
+  }, [metadataPathsKey, params.conditionColumn])
 
   useEffect(() => {
     const check = async () => {
@@ -438,6 +454,10 @@ export default function AnalysisWorkspace({
     && Number.isFinite(Number(params.pValueThreshold))
     && Number(params.pValueThreshold) >= 0
     && Number(params.pValueThreshold) <= 1
+    && Number.isFinite(Number(params.correlationThreshold))
+    && Number(params.correlationThreshold) >= 0
+    && Number(params.correlationThreshold) <= 1
+    && !!params.conditionColumn
     && !!params.conditionA
     && !!params.conditionB
     && params.conditionA !== params.conditionB
@@ -756,10 +776,10 @@ export default function AnalysisWorkspace({
             onChange={setParams}
             availableDatasets={availableDatasets}
             conditionOptions={allMetadataConditions}
+            conditionColumns={metadataColumns}
             disabled={isInteractionLocked}
           />
           <div className={styles.runInline}>
-            <h3>3 · Run Analysis</h3>
             {status === 'running' && <AnalysisProgress progress={progress} logs={logs} />}
             {error && <p className={styles.error}>{error}</p>}
             {params.correlationMethod === 'sparcc' && isCheckingSparcc && (
@@ -773,51 +793,53 @@ export default function AnalysisWorkspace({
                 recorded in the log. Configure FastSpar in Settings to use SparCC.
               </p>
             )}
-            <button className={styles.runButton} onClick={handleRun} disabled={!canRun}>
-              {status === 'running' ? 'Running…' : isHistory ? 'Re-run analysis' : 'Start Analysis'}
-            </button>
             {!hasInputData && (
               <p className={styles.resultsHint}>Add at least one abundance file to enable the analysis.</p>
             )}
+            <button className={`${styles.runButton} ${styles.runButtonBottom}`} onClick={handleRun} disabled={!canRun}>
+              {status === 'running' ? 'Running…' : isHistory ? 'Re-run analysis' : 'Start Analysis'}
+            </button>
           </div>
         </section>
 
         <section className={`${styles.section} ${styles.clusterControlsSection}`}>
-          <h2>4 · Taxa Selection</h2>
-          {taxaSectionReady ? (
-            <>
-              <SeedSelector
-                nodes={selectorNodes}
-                searchValue={taxaSearch}
-                selectedTaxa={selectedTaxa}
-                onSearchChange={setTaxaSearch}
-                onTaxaSelect={setSelectedTaxa}
-                inputId='cluster-taxa-selector'
-                disabled={isInteractionLocked}
-              />
-              <button
-                className={styles.runButton}
-                onClick={runSubgraphsForConditions}
-                disabled={!selectedTaxa.trim() || isInteractionLocked || graphRefs.length === 0}
-              >
-                {isClusteringRunning ? 'Clustering in progress...' : 'Start clustering algorithm'}
-              </button>
-            </>
-          ) : (
-            <p className={styles.resultsHint}>Taxa are available only after the analysis completes.</p>
-          )}
+          <h2>3 · Taxa Selection</h2>
+          <div className={styles.panelBody}>
+            {taxaSectionReady ? (
+              <div className={styles.clusterContent}>
+                <SeedSelector
+                  nodes={selectorNodes}
+                  searchValue={taxaSearch}
+                  selectedTaxa={selectedTaxa}
+                  onSearchChange={setTaxaSearch}
+                  onTaxaSelect={setSelectedTaxa}
+                  inputId='cluster-taxa-selector'
+                  disabled={isInteractionLocked}
+                />
+                <button
+                  className={`${styles.runButton} ${styles.clusterRunButton}`}
+                  onClick={runSubgraphsForConditions}
+                  disabled={!selectedTaxa.trim() || isInteractionLocked || graphRefs.length === 0}
+                >
+                  {isClusteringRunning ? 'Clustering in progress...' : 'Start clustering algorithm'}
+                </button>
+              </div>
+            ) : (
+              <p className={styles.resultsHint}>Taxa are available only after the analysis completes.</p>
+            )}
+          </div>
         </section>
 
         {analysisJobId && isResultsLoading && (
           <section className={`${styles.section} ${styles.resultsSection}`}>
-            <h2>5 · Cluster Results</h2>
+            <h2>4 · Cluster Results</h2>
             <p className={styles.resultsHint}>Loading results…</p>
           </section>
         )}
 
         {hasInlineResults && !isResultsLoading && (
           <section className={`${styles.section} ${styles.resultsSection}`}>
-            <h2>5 · Cluster Results</h2>
+            <h2>4 · Cluster Results</h2>
             <ChartPanel
               graphRefs={graphRefs}
               conditionGraphs={conditionGraphs}

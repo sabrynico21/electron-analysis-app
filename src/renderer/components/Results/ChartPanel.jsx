@@ -1,7 +1,41 @@
 import { useMemo, useState } from 'react'
 import styles from './ChartPanel.module.css'
 import SubgraphPlot from './SubgraphPlot'
+import ExportableTable from './ExportableTable'
 import { buildDerivedSubgraphs } from '../../utils/subgraphComparison'
+import {
+  conditionEdgeRows,
+  clusterEdgeRows,
+  derivedEdgeRows,
+  intersectionEdgeRows,
+  nodePresenceRows,
+} from '../../utils/graphExports'
+
+/** Turn a condition name into a filesystem-friendly prefix. */
+const safeFileName = (value) => String(value || 'condition').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'condition'
+
+/** Filesystem-friendly single token; returns '' when there is nothing usable. */
+const slugToken = (value) => String(value || '').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '')
+
+const countBySign = (edges = []) => {
+  let negative = 0
+  let positive = 0
+  edges.forEach((edge) => {
+    const weight = Number(edge?.weight) || 0
+    if (weight > 0) positive += 1
+    if (weight < 0) negative += 1
+  })
+  return { negative, positive }
+}
+
+const formatNegativeToPositiveRatio = (edges = []) => {
+  const { negative, positive } = countBySign(edges)
+  if (positive === 0) {
+    if (negative === 0) return '0.00'
+    return 'inf'
+  }
+  return (negative / positive).toFixed(2)
+}
 
 export default function ChartPanel({
   graphRefs = [],
@@ -23,6 +57,9 @@ export default function ChartPanel({
   const twoConditionRefs = graphRefs.slice(0, 2)
   const firstRef = twoConditionRefs[0]
   const secondRef = twoConditionRefs[1]
+  // Seed taxon used to grow the cluster, prepended to the cluster export name so
+  // clusters computed from different seeds do not overwrite each other on disk.
+  const seedTaxaSlug = slugToken(selectedTaxa)
   const resolveStatus = (cacheKey) => {
     if (!cacheKey) return 'idle'
     const explicit = runStatusByGraph[cacheKey]
@@ -50,10 +87,13 @@ export default function ChartPanel({
   return (
     <div className={styles.panel}>
       <div className={styles.grid}>
-      {twoConditionRefs.map((ref) => {
+      {twoConditionRefs.map((ref, graphIndex) => {
         const payload = conditionGraphs[ref.cacheKey]
         const graph = payload?.graph
         const stats = graph?.stats
+        const sampleCount = stats?.condition_samples_after_dataset_filter
+          ?? stats?.condition_samples_in_metadata
+          ?? null
         const recluster = reclusterByGraph[ref.cacheKey]
         const subgraph = recluster?.subgraph
         const runStatus = resolveStatus(ref.cacheKey)
@@ -74,7 +114,10 @@ export default function ChartPanel({
         return (
           <div key={ref.cacheKey} className={styles.regionCard}>
             <div className={styles.regionHeader}>
-              <h3>{ref.condition}</h3>
+              <h3>
+                {ref.condition}
+                {sampleCount !== null ? ` (${sampleCount} samples)` : ''}
+              </h3>
               <span className={styles.regionBadge}>Condition</span>
             </div>
             {!graph && <p>Loading condition graph...</p>}
@@ -82,7 +125,7 @@ export default function ChartPanel({
               <>
                 <section className={styles.metricSection}>
                   <h4 className={styles.metricTitle}>Graph Statistics</h4>
-                  <div className={styles.propsGrid}>
+                  <div className={`${styles.propsGrid} ${styles.propsGridRatio}`}>
                     <div className={styles.propBox}>
                       <span>Graph nodes</span>
                       <strong>{stats?.node_count ?? graph.nodes.length}</strong>
@@ -90,6 +133,10 @@ export default function ChartPanel({
                     <div className={styles.propBox}>
                       <span>Graph edges</span>
                       <strong>{stats?.edge_count ?? graph.edges.length}</strong>
+                    </div>
+                    <div className={styles.propBox}>
+                      <span>N/P ratio</span>
+                      <strong>{formatNegativeToPositiveRatio(graph.edges)}</strong>
                     </div>
                     <div className={styles.propBox}>
                       <span>Taxa in graph</span>
@@ -114,7 +161,7 @@ export default function ChartPanel({
 
                   <div className={styles.subgraphSection}>
                     <h4>{useExclusive ? 'Cluster subgraph without intersection' : 'Cluster subgraph'}</h4>
-                    <div className={styles.propsGrid}>
+                    <div className={`${styles.propsGrid} ${styles.propsGridRatio}`}>
                       <div className={styles.propBox}>
                         <span>Cluster nodes</span>
                         <strong>{subgraphNodes.length}</strong>
@@ -122,6 +169,10 @@ export default function ChartPanel({
                       <div className={styles.propBox}>
                         <span>Cluster edges</span>
                         <strong>{subgraphEdges.length}</strong>
+                      </div>
+                      <div className={styles.propBox}>
+                        <span>N/P ratio</span>
+                        <strong>{formatNegativeToPositiveRatio(subgraphEdges)}</strong>
                       </div>
                       <div className={styles.propBox}>
                         <span>Result status</span>
@@ -325,6 +376,35 @@ export default function ChartPanel({
                     </div>
                   </div>
                 </section>
+
+                <section className={styles.metricSection}>
+                  <h4 className={styles.metricTitle}>Downloadable tables</h4>
+                  <div className={styles.exportTables}>
+                    <ExportableTable
+                      title={`Full condition graph · ${ref.condition}`}
+                      description='Every edge of the condition graph with its correlation value.'
+                      rows={conditionEdgeRows(graph, ref.condition)}
+                      fileName={`${safeFileName(ref.condition)}_full_graph_edges.csv`}
+                      testId={`export-full-graph-${graphIndex}`}
+                    />
+                    <ExportableTable
+                      title={`Cluster · ${ref.condition}`}
+                      description='Edges of the cluster subgraph, with the correlation value of each edge.'
+                      rows={clusterEdgeRows(subgraph, ref.condition)}
+                      fileName={`${seedTaxaSlug ? `${seedTaxaSlug}_` : ''}${safeFileName(ref.condition)}_cluster_edges.csv`}
+                      testId={`export-cluster-${graphIndex}`}
+                      emptyLabel='No cluster computed yet.'
+                    />
+                    <ExportableTable
+                      title={`Only in ${ref.condition} · edges`}
+                      description='Edges of this cluster that are not part of the intersection with the other condition (same as the "Without intersection" view).'
+                      rows={derivedEdgeRows(conditionDerived?.edges || [], ref.condition)}
+                      fileName={`${safeFileName(ref.condition)}_only_edges.csv`}
+                      testId={`export-exclusive-${graphIndex}`}
+                      emptyLabel='No exclusive edge.'
+                    />
+                  </div>
+                </section>
               </>
             )}
           </div>
@@ -338,6 +418,7 @@ export default function ChartPanel({
           <p className={styles.infoText}>Intersection and complement graphs will be available when both conditions have a valid cluster.</p>
         )}
         {canRenderCombined && (
+          <>
           <div className={styles.comparisonGrid}>
             <div className={styles.regionCard}>
               <div className={styles.regionHeader}>
@@ -392,6 +473,7 @@ export default function ChartPanel({
                 maxNodes={maxIntersectionNodes}
                 seedNode={selectedTaxa}
                 controlsDisabled={interactionLocked}
+                conflictLabels={{ first: firstRef?.condition, second: secondRef?.condition }}
               />
             </div>
 
@@ -451,6 +533,45 @@ export default function ChartPanel({
               />
             </div>
           </div>
+
+          <div className={styles.exportTables}>
+            <ExportableTable
+              title={`Intersection · ${firstRef?.condition || 'condition 1'} ∩ ${secondRef?.condition || 'condition 2'}`}
+              description='Edges joining the same two nodes in both clusters. Edges with opposite signs keep both correlation values.'
+              rows={intersectionEdgeRows(
+                derivedSubgraphs.intersection.edges,
+                safeFileName(firstRef?.condition),
+                safeFileName(secondRef?.condition),
+              )}
+              fileName='intersection_edges.csv'
+              testId='export-intersection'
+              emptyLabel='No shared edge between the two clusters.'
+            />
+            <ExportableTable
+              title='Complement · union without intersection'
+              description='Edges present in exactly one cluster (nodes shared by both clusters are excluded).'
+              rows={derivedEdgeRows(derivedSubgraphs.complement.edges, 'complement')}
+              fileName='complement_edges.csv'
+              testId='export-complement'
+              emptyLabel='The complement is empty.'
+            />
+            <ExportableTable
+              title='Nodes present in only one condition'
+              description='For every node in exactly one cluster: whether it is missing only from the other cluster or from the other condition graph entirely.'
+              rows={nodePresenceRows(
+                reclusterByGraph[firstRef?.cacheKey]?.subgraph,
+                reclusterByGraph[secondRef?.cacheKey]?.subgraph,
+                conditionGraphs[firstRef?.cacheKey]?.graph,
+                conditionGraphs[secondRef?.cacheKey]?.graph,
+                firstRef?.condition || 'condition 1',
+                secondRef?.condition || 'condition 2',
+              )}
+              fileName='nodes_only_in_one_condition.csv'
+              testId='export-node-presence'
+              emptyLabel='Every cluster node is shared by both conditions.'
+            />
+          </div>
+          </>
         )}
       </div>
     </div>

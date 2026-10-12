@@ -204,6 +204,17 @@
 	border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
 }
 
+.exports {
+	padding-top: 0.75rem;
+	border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+
+.exportTables {
+	display: flex;
+	flex-direction: column;
+	gap: 0.6rem;
+}
+
 .graphPanel {
 	display: flex;
 	flex-direction: column;

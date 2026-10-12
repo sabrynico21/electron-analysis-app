@@ -1,6 +1,6 @@
 import styles from './ParametersForm.module.css'
 
-export default function ParametersForm({ values, onChange, availableDatasets, conditionOptions, disabled = false }) {
+export default function ParametersForm({ values, onChange, availableDatasets, conditionOptions, conditionColumns = [], disabled = false }) {
   const handleChange = (key, value) => onChange((prev) => ({ ...prev, [key]: value }))
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 
@@ -37,6 +37,7 @@ export default function ParametersForm({ values, onChange, availableDatasets, co
         >
           <option value="spearman">Spearman</option>
           <option value="sparcc">SparCC</option>
+          <option value="spieceasi">SPIEC-EASI (MB)</option>
         </select>
       </div>
 
@@ -88,6 +89,21 @@ export default function ParametersForm({ values, onChange, availableDatasets, co
       </div>
 
       <div className={styles.field}>
+        <label htmlFor="conditionColumn">Condition column</label>
+        <select
+          id="conditionColumn"
+          value={values.conditionColumn ?? ''}
+          onChange={(e) => handleChange('conditionColumn', e.target.value)}
+          disabled={disabled || conditionColumns.length === 0}
+        >
+          <option value="" disabled>Select metadata column</option>
+          {conditionColumns.map((column) => (
+            <option key={column} value={column}>{column}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className={styles.field}>
         <label htmlFor="conditionA">Condition A</label>
         <select
           id="conditionA"
@@ -115,6 +131,42 @@ export default function ParametersForm({ values, onChange, availableDatasets, co
             <option key={opt} value={opt} disabled={opt === values.conditionA}>{opt}</option>
           ))}
         </select>
+      </div>
+
+      <div className={styles.field}>
+        <label htmlFor="correlationThreshold">
+          Correlation filter · min |r| <span className={styles.range}>(0.0 - 1.0)</span>
+        </label>
+        <input
+          id="correlationThreshold"
+          type="number"
+          min="0"
+          max="1"
+          step="0.05"
+          disabled={disabled}
+          value={values.correlationThreshold ?? 0}
+          onChange={(e) => {
+            // Same editing semantics as the p-value threshold: keep the input
+            // editable while typing and clamp only when the value is numeric.
+            const raw = e.target.value
+            if (raw === '') {
+              handleChange('correlationThreshold', '')
+              return
+            }
+            const parsed = Number(raw)
+            if (Number.isFinite(parsed)) {
+              handleChange('correlationThreshold', clamp(parsed, 0, 1))
+            }
+          }}
+          onBlur={(e) => {
+            const parsed = Number(e.target.value)
+            const normalized = Number.isFinite(parsed) ? clamp(parsed, 0, 1) : 0
+            handleChange('correlationThreshold', normalized)
+          }}
+        />
+        <small className={styles.range}>
+          Keeps only edges with |correlation| ≥ threshold.
+        </small>
       </div>
     </form>
   )

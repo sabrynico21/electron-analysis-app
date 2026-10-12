@@ -145,6 +145,39 @@ function setupIpcHandlers() {
     )
   })
 
+  /**
+   * Write a text payload (typically CSV built in the renderer) to a
+   * user-chosen file. The renderer computes the table, the main process owns
+   * the native save dialog and the actual write.
+   * @param {{ defaultFileName?: string, content?: string, format?: 'csv'|'txt' }} payload
+   */
+  ipcMain.handle('exports:saveText', async (event, payload = {}) => {
+    try {
+      const { defaultFileName = 'table.csv', content = '', format = 'csv' } = payload || {}
+      if (typeof content !== 'string' || content.length === 0) {
+        return { success: false, error: 'Nothing to export.' }
+      }
+      const parent = BrowserWindow.fromWebContents(event.sender)
+      const filters = format === 'csv'
+        ? [{ name: 'CSV', extensions: ['csv'] }]
+        : [{ name: 'Text', extensions: ['txt'] }]
+      const { canceled, filePath } = await dialog.showSaveDialog(parent || undefined, {
+        title: 'Save table',
+        defaultPath: defaultFileName,
+        filters,
+      })
+      if (canceled || !filePath) {
+        return { success: false, error: 'cancelled' }
+      }
+      await fs.writeFile(filePath, content, 'utf-8')
+      log.info(`Exported table to ${filePath}`)
+      return { success: true, path: filePath }
+    } catch (error) {
+      log.error('exports:saveText error:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
   ipcMain.handle('results:deleteAnalysis', async (_event, jobId) => {
     return await analysisManager.deleteAnalysis(jobId)
   })

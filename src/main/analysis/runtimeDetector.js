@@ -82,6 +82,19 @@ function getBundledBackendPath() {
 }
 
 /**
+ * Where the frozen backend would be expected for the current platform. Reported
+ * to the UI so advanced users can see that a backend exists but was built for a
+ * different operating system (e.g. a Windows `.exe` in a Linux dev checkout).
+ * @returns {string}
+ */
+function getExpectedBackendPath() {
+  const root = app.isPackaged
+    ? path.join(process.resourcesPath || '', 'python-dist')
+    : path.join(app.getAppPath(), 'python-dist')
+  return path.join(root, 'analysis-backend', _backendExecutableName())
+}
+
+/**
  * Describes how analyses will be executed: with the bundled backend, or with
  * the Python interpreter found on the system.
  */
@@ -90,6 +103,7 @@ function getAnalysisRuntimeStatus() {
   return {
     kind: bundledPath ? 'bundled' : 'system-python',
     bundledPath: bundledPath || '',
+    expectedBundledPath: getExpectedBackendPath(),
     requiresPythonInstallation: !bundledPath,
     platform: process.platform,
     arch: process.arch,

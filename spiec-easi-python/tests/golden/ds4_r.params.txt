@@ -1,0 +1,12 @@
+dataset=ds4
+n=50
+p=10
+want_zeros=FALSE
+depth=200000
+data_seed=104
+nlambda=20
+lambda_min_ratio=0.001
+rep.num=20
+threshold=0.05
+stars_seed=17
+fixed_index=10

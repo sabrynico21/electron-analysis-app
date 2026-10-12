@@ -14,17 +14,33 @@ the wrapper creates an isolated build virtualenv and installs the requirements.
 from pathlib import Path
 
 PYTHON_DIR = Path(SPECPATH).resolve()
+REPO_ROOT = PYTHON_DIR.parent
 CLUSTERING_DIR = PYTHON_DIR / "clustering"
+# SPIEC-EASI lives in the standalone library so the app and the library share a
+# single source instead of a duplicated copy.
+SPIEC_EASI_SRC = REPO_ROOT / "spiec-easi-python" / "src"
 
 analysis = Analysis(
     [str(PYTHON_DIR / "backend.py")],
-    pathex=[str(PYTHON_DIR), str(CLUSTERING_DIR)],
+    pathex=[str(PYTHON_DIR), str(CLUSTERING_DIR), str(SPIEC_EASI_SRC)],
     binaries=[],
     datas=[],
     # The clustering package is imported at function level from backend.py and
     # uses flat imports (`from bacteria_graph import ...`), so make sure the
     # modules are collected even though they are not top-level imports.
-    hiddenimports=["bacteria_graph", "bacteria_pagerank", "pagerank_nibble"],
+    hiddenimports=[
+        "bacteria_graph",
+        "bacteria_pagerank",
+        "pagerank_nibble",
+        "spieceasi",
+        "spieceasi._types",
+        "spieceasi._validation",
+        "spieceasi.graph",
+        "spieceasi.neighborhood",
+        "spieceasi.pipeline",
+        "spieceasi.stars",
+        "spieceasi.transforms",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

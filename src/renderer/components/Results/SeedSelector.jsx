@@ -1,14 +1,6 @@
 import { useMemo } from 'react'
 import styles from './SeedSelector.module.css'
 
-function formatTaxaLabel(value = '') {
-  const source = String(value || '')
-  const idx = source.indexOf('g_')
-  if (idx < 0) return source
-  const compact = source.slice(idx + 2).trim()
-  return compact || source
-}
-
 export default function SeedSelector({
   nodes = [],
   searchValue,
@@ -37,20 +29,11 @@ export default function SeedSelector({
       })
   }, [sortedNodes, searchValue])
 
-  const selectedNode = useMemo(
-    () => sortedNodes.find((node) => (node.id || node.label) === selectedTaxa),
-    [sortedNodes, selectedTaxa],
-  )
-
-  const selectedLabel = selectedNode
-    ? formatTaxaLabel(selectedNode.label || selectedNode.id)
-    : (selectedTaxa ? formatTaxaLabel(selectedTaxa) : 'None')
-
   return (
     <div className={styles.wrapper}>
       <div className={styles.topBar}>
         <div className={styles.searchBlock}>
-          <label htmlFor={inputId} className={styles.label}></label>
+          <label htmlFor={inputId} className={styles.label}>Search taxa</label>
           <input
             id={inputId}
             className={styles.input}
@@ -61,8 +44,6 @@ export default function SeedSelector({
             placeholder='Type to search taxa'
           />
         </div>
-
-        <p className={styles.selectedText}>Selected taxa: <strong>{selectedLabel}</strong></p>
 
         <div className={styles.legend} aria-label='Taxa type legend'>
           <span className={styles.legendItem}>

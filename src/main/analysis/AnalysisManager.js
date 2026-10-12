@@ -7,10 +7,12 @@ const path = require('path')
 const fs = require('fs').promises
 const fsSync = require('fs')
 const crypto = require('crypto')
-const { app, dialog } = require('electron')
+const { app, dialog, powerSaveBlocker } = require('electron')
 const os = require('os')
 const log = require('electron-log')
 const { getPythonPath, getBundledBackendPath, getAnalysisRuntimeStatus, resolveFastsparPath, resolveFastsparCompanions, getSparccRuntimeStatus } = require('./runtimeDetector')
+
+const DEFAULT_CONDITION_COLUMN = 'Combination_treat2'
 
 class AnalysisManager {
   constructor() {
@@ -36,6 +38,7 @@ class AnalysisManager {
     this.cacheIndexPath = path.join(app.getPath('userData'), 'analysis-cache', 'index.json')
     this.resultsDir = path.join(app.getPath('userData'), 'analysis-results')
     this.clusterSnapshotsDir = path.join(this.resultsDir, 'clusters')
+    this.sleepBlockerId = null
 
     this._loadGraphCacheIndex().catch((error) => {
       log.warn('Failed to load graph cache index:', error)
@@ -48,6 +51,24 @@ class AnalysisManager {
 
   async _ensureResultsDir() {
     await fs.mkdir(this.resultsDir, { recursive: true })
+  }
+
+  _refreshSleepBlocker() {
+    const hasActiveJobs = this.activeJobs.size > 0
+    if (hasActiveJobs && this.sleepBlockerId == null) {
+      // Keep analyses running even when the screen is locked / display sleeps.
+      this.sleepBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+      log.info(`Enabled sleep blocker for active analyses (id=${this.sleepBlockerId})`)
+      return
+    }
+
+    if (!hasActiveJobs && this.sleepBlockerId != null) {
+      if (powerSaveBlocker.isStarted(this.sleepBlockerId)) {
+        powerSaveBlocker.stop(this.sleepBlockerId)
+      }
+      log.info(`Disabled sleep blocker (id=${this.sleepBlockerId})`)
+      this.sleepBlockerId = null
+    }
   }
 
   _resultDiskPath(jobId) {
@@ -102,8 +123,8 @@ class AnalysisManager {
     return crypto.createHash('sha1').update(basis).digest('hex')
   }
 
-  _graphCacheKey({ jobId, condition, correlationMethod, pValueThreshold, datasetFingerprint, datasetType }) {
-    const raw = [jobId, condition, correlationMethod, pValueThreshold, datasetFingerprint, datasetType || 'unknown'].join('|')
+  _graphCacheKey({ jobId, condition, correlationMethod, pValueThreshold, correlationThreshold, datasetFingerprint, datasetType }) {
+    const raw = [jobId, condition, correlationMethod, pValueThreshold, correlationThreshold ?? 0, datasetFingerprint, datasetType || 'unknown'].join('|')
     return crypto.createHash('sha1').update(raw).digest('hex')
   }
 
@@ -134,6 +155,7 @@ class AnalysisManager {
 
     await this._ensureCacheDir()
     const pValueThreshold = result?.summary?.p_value_threshold ?? payload?.params?.pValueThreshold ?? 0.05
+    const correlationThreshold = result?.summary?.correlation_threshold ?? payload?.params?.correlationThreshold ?? 0
     const correlationMethod = payload?.params?.correlationMethod || 'spearman'
     const datasetType = payload?.params?.datasetType || 'unknown'
     const datasetFingerprint = this._datasetFingerprint(payload)
@@ -147,6 +169,7 @@ class AnalysisManager {
         condition,
         correlationMethod,
         pValueThreshold,
+        correlationThreshold,
         datasetFingerprint,
         datasetType,
       })
@@ -159,6 +182,7 @@ class AnalysisManager {
         correlationMethod,
         datasetType,
         pValueThreshold,
+        correlationThreshold,
         datasetFingerprint,
         createdAt: new Date().toISOString(),
         graph: conditionGraph.graph,
@@ -324,7 +348,7 @@ class AnalysisManager {
   }
 
   async _hasRequiredPackages(interpreter) {
-    const check = await this._runCommand(interpreter, ['-c', 'import scipy, networkx, numpy'])
+    const check = await this._runCommand(interpreter, ['-c', 'import scipy, networkx, numpy, sklearn, joblib'])
     return check.code === 0
   }
 
@@ -425,10 +449,10 @@ class AnalysisManager {
     }
 
     throw new Error(
-      'The analysis packages (scipy, numpy, networkx) are unavailable and could not be installed automatically. ' +
+      'The analysis packages (scipy, numpy, networkx, scikit-learn, joblib) are unavailable and could not be installed automatically. ' +
       `Tried interpreter: ${base}. ` +
       'Connect to the internet and retry — or create an environment with ' +
-      '"python3 -m venv <folder>", run "pip install scipy numpy networkx" inside it, ' +
+      '"python3 -m venv <folder>", run "pip install scipy numpy networkx scikit-learn joblib" inside it, ' +
       'then select it in Settings → Python.'
     )
   }
@@ -540,7 +564,36 @@ class AnalysisManager {
     // the file, so writing it earlier would silently drop `fastsparPath`.
     await fs.writeFile(paramsPath, JSON.stringify({ files, params, jobId }))
 
-    const backend = await this._resolveBackend((line) => onLog({ jobId, line }))
+    const selectedConditionColumn = String(params?.conditionColumn || '').trim()
+    const needsPythonForConditionColumn = (
+      selectedConditionColumn.length > 0
+      && selectedConditionColumn !== DEFAULT_CONDITION_COLUMN
+    )
+
+    let backend
+    if (requestedMethod === 'spieceasi' || needsPythonForConditionColumn) {
+      // The frozen backend may lag behind source features. Route SPIEC-EASI (and
+      // non-default condition-column runs) to the Python backend to guarantee
+      // consistent parameter handling.
+      const interpreter = await this._resolvePythonInterpreter((line) => onLog({ jobId, line }))
+      backend = { kind: 'python', command: interpreter }
+      if (requestedMethod === 'spieceasi') {
+        onLog({
+          jobId,
+          level: 'info',
+          line: '[info] Running SPIEC-EASI with the Python analysis backend for full method support.',
+        })
+      }
+      if (needsPythonForConditionColumn) {
+        onLog({
+          jobId,
+          level: 'info',
+          line: `[info] Running with the Python analysis backend because condition column '${selectedConditionColumn}' is selected.`,
+        })
+      }
+    } else {
+      backend = await this._resolveBackend((line) => onLog({ jobId, line }))
+    }
     const resultPath = path.join(os.tmpdir(), `result_${jobId}.json`)
     const args = this._buildBackendArgs(backend, 'analyze', scriptName, [
       '--params', paramsPath,
@@ -556,6 +609,7 @@ class AnalysisManager {
     return new Promise((resolve, reject) => {
       const proc = spawn(backend.command, args)
       this.activeJobs.set(jobId, proc)
+      this._refreshSleepBlocker()
       let stderr = ''
 
       proc.stdout.on('data', (data) => {
@@ -582,6 +636,7 @@ class AnalysisManager {
 
       proc.on('close', async (code) => {
         this.activeJobs.delete(jobId)
+        this._refreshSleepBlocker()
         if (code === 0) {
           try {
             const raw = await fs.readFile(resultPath, 'utf-8')
@@ -631,6 +686,7 @@ class AnalysisManager {
 
       proc.on('error', (err) => {
         this.activeJobs.delete(jobId)
+        this._refreshSleepBlocker()
         reject(err)
       })
     })
@@ -641,6 +697,7 @@ class AnalysisManager {
     if (proc) {
       proc.kill('SIGTERM')
       this.activeJobs.delete(jobId)
+      this._refreshSleepBlocker()
       log.info(`[Job ${jobId}] Cancelled`)
     }
   }

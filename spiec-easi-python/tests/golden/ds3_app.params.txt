@@ -1,0 +1,12 @@
+dataset=ds3
+n=15
+p=30
+want_zeros=TRUE
+depth=800
+data_seed=103
+nlambda=25
+lambda_min_ratio=0.01
+rep.num=20
+threshold=0.05
+stars_seed=17
+fixed_index=12

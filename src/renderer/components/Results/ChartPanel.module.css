@@ -7,9 +7,10 @@
 .metricSection { border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0.65rem; background: color-mix(in srgb, var(--color-surface) 92%, var(--color-bg) 8%); margin-bottom: 0.75rem; }
 .metricTitle { margin: 0 0 0.55rem; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-muted); }
 .propsGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.55rem; margin-bottom: 0.65rem; }
+.propsGridRatio { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .propBox { border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); padding: 0.5rem; display: grid; gap: 0.2rem; }
 .propBox span { font-size: 0.72rem; color: var(--color-text-muted); }
-.propBox strong { font-size: 1.05rem; color: var(--color-text); }
+.propBox strong { font-size: 0.95rem; color: var(--color-text); line-height: 1.15; }
 .statusRow { display: flex; align-items: center; gap: 0.55rem; margin: 0.35rem 0 0; }
 .statusDot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .status_idle { background: #8b97a5; }
@@ -65,6 +66,7 @@
 .comparisonSection { margin-top: 0.7rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-surface) 92%, #f0f7f3 8%); padding: 1rem; }
 .comparisonSection h3 { margin: 0 0 0.6rem; font-size: 1rem; }
 .comparisonGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.exportTables { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.75rem; }
 
 @keyframes pulse {
 	0% { opacity: 1; transform: scale(1); }

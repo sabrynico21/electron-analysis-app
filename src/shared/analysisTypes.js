@@ -23,6 +23,7 @@
  * @property {string} id
  * @property {string} label
  * @property {'bacteria'|'fungi'} kind
+ * @property {number=} overabundance
  *
  * @typedef {Object} GraphEdge
  * @property {string} source

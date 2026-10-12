@@ -213,7 +213,7 @@ describe('history archive and comparison view', () => {
     before(async () => {
       await app.client.evaluate(`location.hash = '#/history?compare=${IDS.rich},${IDS.plain}'; return true`)
       assert.equal(
-        await app.client.waitFor(`document.querySelectorAll("[data-testid='graph-select-a-conditions']").length === 1`, { timeoutMs: 30000 }),
+        await app.client.waitFor(`document.querySelectorAll("[data-testid='graph-select-a-clusters']").length === 1`, { timeoutMs: 30000 }),
         true
       )
       await new Promise((resolve) => setTimeout(resolve, 500))
@@ -248,33 +248,35 @@ describe('history archive and comparison view', () => {
       assert.equal(geometry.statusText, 'completed')
     })
 
-    it('gives condition graphs and clusters their own fixed-size area', async () => {
+    it('gives the clusters a fixed-size area and no longer shows a condition graph', async () => {
       const areas = await app.client.evaluate(`
         const height = (id) => Math.round(document.querySelector("[data-testid='" + id + "']").getBoundingClientRect().height)
         const plots = (id) => document.querySelectorAll("[data-testid='" + id + "'] svg[role='img']").length
         return {
-          panels: ['conditions', 'clusters'].map((kind) => Boolean(document.querySelector("[data-testid='graph-panel-a-" + kind + "']"))),
+          clusterPanel: Boolean(document.querySelector("[data-testid='graph-panel-a-clusters']")),
+          conditionPanel: Boolean(document.querySelector("[data-testid='graph-panel-a-conditions']")),
           selectCount: document.querySelectorAll("[data-testid='compare-column-a'] select").length,
           heights: [
-            height('graph-viewport-a-conditions'), height('graph-viewport-a-clusters'),
-            height('graph-viewport-b-conditions'), height('graph-viewport-b-clusters'),
+            height('graph-viewport-a-clusters'),
+            height('graph-viewport-b-clusters'),
           ],
-          plotsA: plots('graph-viewport-a-conditions') + plots('graph-viewport-a-clusters'),
+          plotsA: plots('graph-viewport-a-clusters'),
         }
       `)
-      assert.deepEqual(areas.panels, [true, true], 'condition graphs and clusters need separate areas')
-      assert.equal(areas.selectCount, 2, 'each area uses exactly one select switcher')
-      assert.equal(new Set(areas.heights).size, 1, `the graph areas must have one fixed height: ${areas.heights}`)
+      assert.equal(areas.clusterPanel, true, 'the clusters need their own area')
+      assert.equal(areas.conditionPanel, false, 'the condition graph area must be gone')
+      assert.equal(areas.selectCount, 1, 'the single area uses exactly one select switcher')
+      assert.equal(new Set(areas.heights).size, 1, `the graph area must have one fixed height: ${areas.heights}`)
       assert.ok(areas.heights[0] >= 250)
-      assert.equal(areas.plotsA, 2, 'exactly one graph per area must be rendered')
+      assert.equal(areas.plotsA, 1, 'exactly one graph must be rendered')
     })
 
     it('shows the selected option in full and switches the rendered graph', async () => {
       const info = await app.client.evaluate(`
         ${SET_SELECT_HELPER}
-        const select = document.querySelector("[data-testid='graph-select-a-conditions']")
+        const select = document.querySelector("[data-testid='graph-select-a-clusters']")
         const label = (element) => element.options[element.selectedIndex].textContent
-        const nodeSet = () => [...document.querySelector("[data-testid='graph-viewport-a-conditions'] svg[role='img']")
+        const nodeSet = () => [...document.querySelector("[data-testid='graph-viewport-a-clusters'] svg[role='img']")
           .querySelectorAll('title')].map((title) => title.textContent).sort().join('|')
         const before = nodeSet()
         const beforeLabel = label(select)
@@ -286,10 +288,10 @@ describe('history archive and comparison view', () => {
           beforeLabel,
           afterLabel: label(select),
           changed: before !== nodeSet(),
-          singlePlot: document.querySelectorAll("[data-testid='graph-viewport-a-conditions'] svg[role='img']").length === 1,
+          singlePlot: document.querySelectorAll("[data-testid='graph-viewport-a-clusters'] svg[role='img']").length === 1,
         }
       `)
-      assert.ok(info.optionCount >= 2, 'both conditions should be offered')
+      assert.ok(info.optionCount >= 2, 'the cluster views should be offered')
       assert.equal(info.truncated, false, 'the selected label must be fully visible')
       assert.equal(info.singlePlot, true)
       assert.equal(info.changed, true, `the graph did not change (${info.beforeLabel} -> ${info.afterLabel})`)
@@ -310,11 +312,11 @@ describe('history archive and comparison view', () => {
 
     it('enlarges a graph in an overlay and closes it with Escape', async () => {
       const overlay = await app.client.evaluate(`
-        const inline = document.querySelector("[data-testid='graph-viewport-a-conditions'] svg[role='img']")
+        const inline = document.querySelector("[data-testid='graph-viewport-a-clusters'] svg[role='img']")
         const inlineWidth = Math.round(inline.getBoundingClientRect().width)
-        document.querySelector("[data-testid='graph-expand-a-conditions']").click()
+        document.querySelector("[data-testid='graph-expand-a-clusters']").click()
         await new Promise((resolve) => setTimeout(resolve, 300))
-        const modal = document.querySelector("[data-testid='graph-overlay-a-conditions']")
+        const modal = document.querySelector("[data-testid='graph-overlay-a-clusters']")
         if (!modal) return { opened: false }
         const enlarged = modal.querySelector("svg[role='img']")
         return { opened: true, inlineWidth, enlargedWidth: Math.round(enlarged.getBoundingClientRect().width) }
@@ -326,10 +328,26 @@ describe('history archive and comparison view', () => {
         await app.client.evaluate(`
           window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
           await new Promise((resolve) => setTimeout(resolve, 300))
-          return document.querySelector("[data-testid='graph-overlay-a-conditions']") === null
+          return document.querySelector("[data-testid='graph-overlay-a-clusters']") === null
         `),
         true
       )
+    })
+
+    it('reports the analysed conditions in the parameters only, not in the summary', async () => {
+      const texts = await app.client.evaluate(`
+        const blocks = [...document.querySelectorAll("[data-testid='compare-column-a'] section")]
+        const block = (title) => blocks.find((section) => section.querySelector('h3')?.textContent.trim() === title)
+        return {
+          parameters: block('Parameters')?.innerText || '',
+          summary: block('Result summary')?.innerText || '',
+        }
+      `)
+      assert.ok(texts.parameters.includes(CONDITION_A), 'condition A belongs to the parameters')
+      assert.ok(texts.parameters.includes(CONDITION_B), 'condition B belongs to the parameters')
+      assert.equal(texts.summary.includes(CONDITION_A), false, 'the summary must not repeat condition A')
+      assert.equal(texts.summary.includes(CONDITION_B), false, 'the summary must not repeat condition B')
+      assert.ok(texts.summary.trim().length > 0, 'the summary still shows the genuine result stats')
     })
 
     it('shows no difference counter and no correlation-value table', async () => {

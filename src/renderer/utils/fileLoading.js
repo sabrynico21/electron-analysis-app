@@ -15,7 +15,7 @@
  * so consumers can trust `exists`/`isFile` without extra stat calls.
  */
 
-/** Column of the metadata file that defines the experimental conditions. */
+/** Default column of the metadata file that defines the experimental conditions. */
 export const METADATA_CONDITION_COLUMN = 'Combination_treat2'
 
 /**
@@ -45,11 +45,39 @@ function toRows(content = '') {
 }
 
 /**
- * Read a metadata file and return the distinct conditions it defines.
+ * Read a metadata file and return its column headers.
  * @param {string} filePath
  * @returns {Promise<string[]>}
  */
-export async function parseMetadataConditions(filePath) {
+export async function parseMetadataColumns(filePath) {
+  if (!filePath) {
+    throw new Error('The file path is not available. Re-add the file with drag & drop or Browse.')
+  }
+
+  const readResult = await window.electronAPI.readFile(filePath)
+  if (!readResult?.success) {
+    throw new Error(readResult?.error || 'Unable to read the metadata file')
+  }
+
+  const rows = toRows(readResult.content)
+  if (rows.length < 2) {
+    throw new Error('The metadata file is empty or contains no data rows')
+  }
+
+  const delimiter = detectDelimiter(rows[0])
+  return rows[0]
+    .split(delimiter)
+    .map((value) => value.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean)
+}
+
+/**
+ * Read a metadata file and return the distinct conditions it defines.
+ * @param {string} filePath
+ * @param {string} [column] Column that holds the experimental condition.
+ * @returns {Promise<string[]>}
+ */
+export async function parseMetadataConditions(filePath, column = METADATA_CONDITION_COLUMN) {
   if (!filePath) {
     throw new Error('The file path is not available. Re-add the file with drag & drop or Browse.')
   }
@@ -66,10 +94,10 @@ export async function parseMetadataConditions(filePath) {
 
   const delimiter = detectDelimiter(rows[0])
   const header = rows[0].split(delimiter).map((value) => value.trim().replace(/^["']|["']$/g, ''))
-  const columnIndex = header.indexOf(METADATA_CONDITION_COLUMN)
+  const columnIndex = header.indexOf(column)
 
   if (columnIndex < 0) {
-    throw new Error(`The metadata file must contain the "${METADATA_CONDITION_COLUMN}" column`)
+    throw new Error(`The metadata file must contain the "${column}" column`)
   }
 
   const conditions = [
@@ -82,7 +110,7 @@ export async function parseMetadataConditions(filePath) {
   ]
 
   if (conditions.length < 2) {
-    throw new Error(`At least 2 distinct values are required in "${METADATA_CONDITION_COLUMN}"`)
+    throw new Error(`At least 2 distinct values are required in "${column}"`)
   }
 
   return conditions

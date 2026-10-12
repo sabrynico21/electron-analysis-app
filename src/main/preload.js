@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConditionGraph: (cacheKey) => ipcRenderer.invoke('results:getConditionGraph', cacheKey),
   reclusterConditionGraph: (payload) => ipcRenderer.invoke('results:reclusterConditionGraph', payload),
   exportResults: (jobId, format) => ipcRenderer.invoke('results:export', jobId, format),
+  saveTextFile: (payload) => ipcRenderer.invoke('exports:saveText', payload),
   deleteAnalysis: (jobId) => ipcRenderer.invoke('results:deleteAnalysis', jobId),
 
   // History archive (persisted in the OS application-data directory)

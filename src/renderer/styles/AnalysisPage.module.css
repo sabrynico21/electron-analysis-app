@@ -12,6 +12,7 @@
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 1.1rem;
+	align-items: stretch;
 }
 
 .workspaceHeader {
@@ -119,10 +120,36 @@
 
 .parametersSection {
 	grid-column: 1;
+	display: flex;
+	flex-direction: column;
 }
 
 .clusterControlsSection {
 	grid-column: 2;
+}
+
+.clusterControlsSection {
+	display: grid;
+	grid-template-rows: auto 1fr;
+	min-height: 0;
+}
+
+.panelBody {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.clusterControlsSection .panelBody {
+	flex: 1;
+}
+
+.clusterContent {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+	flex: 1;
+	min-height: 0;
 }
 
 .resultsSection {
@@ -130,14 +157,16 @@
 }
 
 .runInline {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
 	margin-top: 1rem;
 	padding-top: 1rem;
 	border-top: 1px solid var(--color-border);
 }
 
-.runInline h3 {
-	margin: 0 0 0.6rem;
-	font-size: 1rem;
+.clusterRunButton {
+	margin-top: auto;
 }
 
 .inputRow {
@@ -202,6 +231,10 @@
 .runButton:disabled {
 	opacity: 0.45;
 	cursor: not-allowed;
+}
+
+.runButtonBottom {
+	margin-top: auto;
 }
 
 .error {

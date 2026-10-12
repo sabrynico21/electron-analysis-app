@@ -7,14 +7,17 @@
  * Shape of a column:
  *   - header: side badge, name, timestamps, and the run status next to the
  *     "Open analysis" button (top right);
- *   - input files, parameters and result summary;
- *   - **two separate graph areas of fixed size**: one for the condition graphs,
- *     one for the clusters (including the intersection / exclusive / complement
- *     views of the two clusters). Each area has a single `select` switcher that
- *     always shows the full selected label, a node limit, a button that opens the
- *     graph enlarged in an overlay, and a collapsible line of details.
+ *   - input files, parameters and result summary. The summary only reports the
+ *     statistics that are not already shown as parameters (the analysed
+ *     conditions, the correlation method, the thresholds…), so the same value is
+ *     never displayed twice;
+ *   - **one graph area of fixed size** for the clusters (including the
+ *     intersection / exclusive / complement views of the two clusters), with a
+ *     single `select` switcher that always shows the full selected label, a node
+ *     limit, a button that opens the graph enlarged in an overlay, and a
+ *     collapsible line of details.
  *
- * Fixed areas keep an analysis with fewer conditions exactly as tall as one with
+ * The fixed area keeps an analysis with fewer options exactly as tall as one with
  * more: only the options inside the select change.
  *
  * There is deliberately no "how many differences" counter and no correlation-value
@@ -25,8 +28,19 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import SubgraphPlot from '../Results/SubgraphPlot'
+import ExportableTable from '../Results/ExportableTable'
 import { buildDerivedSubgraphs } from '../../utils/subgraphComparison'
+import {
+  conditionEdgeRows,
+  clusterEdgeRows,
+  derivedEdgeRows,
+  intersectionEdgeRows,
+  nodePresenceRows,
+} from '../../utils/graphExports'
 import styles from './ComparisonView.module.css'
+
+/** Turn a condition name into a filesystem-friendly prefix. */
+const safeFileName = (value) => String(value || 'condition').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'condition'
 
 const PARAM_LABELS = {
   datasetType: 'Data type',
@@ -43,6 +57,28 @@ const FILE_SLOTS = [
   ['fungi', 'Fungi abundance'],
   ['fungi_metadata', 'Fungi metadata'],
 ]
+
+/**
+ * Result-summary keys that merely repeat a parameter already listed in the
+ * "Parameters" block (the analysed conditions above all), so the "Result
+ * summary" must not report them a second time.
+ */
+const SUMMARY_DUPLICATE_KEYS = new Set([
+  'dataset_type',        // datasetType
+  'correlation_method',  // correlationMethod
+  'grouping_mode',       // groupingMode
+  'p_value_threshold',   // pValueThreshold
+  'condition_a',         // conditionA
+  'condition_b',         // conditionB
+  'selected_conditions', // the very same two conditions, listed once more
+])
+
+/** The stored summary without the entries already shown as parameters. */
+function summaryWithoutDuplicates(summary) {
+  return Object.fromEntries(
+    Object.entries(summary || {}).filter(([key]) => !SUMMARY_DUPLICATE_KEYS.has(key))
+  )
+}
 
 /** Clustering metadata entries that are huge arrays rather than scalars. */
 const SKIPPED_METADATA_KEYS = new Set(['ranked_nodes', 'rankedNodes'])
@@ -67,37 +103,28 @@ function metadataEntries(metadata) {
   ))
 }
 
-/** Load one job's results together with its cached condition graphs. */
+/** Load one job's stored results (its clustering snapshot included). */
 function useJobBundle(jobId) {
-  const [state, setState] = useState({ loading: true, results: null, graphs: {}, error: null })
+  const [state, setState] = useState({ loading: true, results: null, error: null })
 
   useEffect(() => {
     let cancelled = false
 
     const load = async () => {
-      setState({ loading: true, results: null, graphs: {}, error: null })
+      setState({ loading: true, results: null, error: null })
       if (!jobId) {
-        setState({ loading: false, results: null, graphs: {}, error: 'Missing analysis id' })
+        setState({ loading: false, results: null, error: 'Missing analysis id' })
         return
       }
 
       const results = await window.electronAPI.getResults(jobId)
       if (cancelled) return
       if (!results) {
-        setState({ loading: false, results: null, graphs: {}, error: 'No stored results for this analysis' })
+        setState({ loading: false, results: null, error: 'No stored results for this analysis' })
         return
       }
 
-      const refs = results?.graph_pipeline?.graph_refs || []
-      const graphs = {}
-      await Promise.all(
-        refs.map(async (ref) => {
-          const response = await window.electronAPI.getConditionGraph(ref.cacheKey)
-          if (response?.success) graphs[ref.cacheKey] = response.graph
-        })
-      )
-      if (cancelled) return
-      setState({ loading: false, results, graphs, error: null })
+      setState({ loading: false, results, error: null })
     }
 
     load()
@@ -121,26 +148,6 @@ function makeView({ id, label, title, nodes = [], edges = [], seedNode = '', det
     details: details.filter(Boolean),
     subtitle: `${nodes.length} nodes · ${edges.length} edges`,
   }
-}
-
-/** One condition graph per condition. */
-function buildConditionGraphViews(refs, graphs) {
-  return refs.slice(0, 2).flatMap((ref) => {
-    const graph = graphs[ref.cacheKey]?.graph || null
-    const nodes = graph?.nodes || []
-    const edges = graph?.edges || []
-    if (nodes.length === 0) return []
-    return [makeView({
-      id: `${ref.cacheKey}::graph`,
-      label: ref.condition,
-      title: `Condition graph · ${ref.condition}`,
-      nodes,
-      edges,
-      details: [
-        graph?.stats?.density !== undefined ? `density ${formatValue(graph.stats.density)}` : '',
-      ],
-    })]
-  })
 }
 
 /** One cluster per condition, plus the combined views when both exist. */
@@ -234,7 +241,7 @@ function KeyValueList({ object, labels = {}, emptyLabel = 'No data.' }) {
  * The viewport height does not depend on the number of options, so two analyses
  * with different numbers of conditions still line up.
  */
-function GraphPanel({ side, kind, title, views, emptyMessage }) {
+function GraphPanel({ side, kind, title, views, emptyMessage, conflictLabels = null }) {
   const [selectedId, setSelectedId] = useState('')
   const [maxNodes, setMaxNodes] = useState(40)
   const [expanded, setExpanded] = useState(false)
@@ -315,6 +322,7 @@ function GraphPanel({ side, kind, title, views, emptyMessage }) {
             edges={activeView.edges}
             maxNodes={maxNodes}
             seedNode={activeView.seedNode}
+            conflictLabels={conflictLabels}
           />
         ) : (
           <div className={styles.emptyViewport}>{emptyMessage}</div>
@@ -362,6 +370,7 @@ function GraphPanel({ side, kind, title, views, emptyMessage }) {
                 edges={activeView.edges}
                 maxNodes={maxNodes}
                 seedNode={activeView.seedNode}
+                conflictLabels={conflictLabels}
               />
             </div>
             <p className={styles.overlayFooter}>{activeView.subtitle}</p>
@@ -375,15 +384,29 @@ function GraphPanel({ side, kind, title, views, emptyMessage }) {
 function ComparisonColumn({ side, entry, bundle, onOpen }) {
   const tintClass = side === 'A' ? styles.tintA : styles.tintB
   const params = entry?.payloadSnapshot?.params || {}
-  const summary = bundle.results?.summary || entry?.summary || {}
+  // The summary repeats the analysed conditions, the method and the thresholds
+  // already shown under "Parameters": drop those copies here.
+  const summary = summaryWithoutDuplicates(bundle.results?.summary || entry?.summary || {})
   const refs = bundle.results?.graph_pipeline?.graph_refs || []
   const lastClustering = bundle.results?.graph_pipeline?.last_clustering || {}
-  const graphs = bundle.graphs
 
   const firstRef = refs[0] || null
   const secondRef = refs[1] || null
   const firstCluster = firstRef ? lastClustering[firstRef.cacheKey] || null : null
   const secondCluster = secondRef ? lastClustering[secondRef.cacheKey] || null : null
+
+  // The full condition graphs are part of the stored results (used here for the
+  // exports: they tell whether a cluster node is also in the condition graph).
+  const conditionGraphs = bundle.results?.graph_pipeline?.condition_graphs || []
+  const graphByCondition = useMemo(
+    () => new Map(conditionGraphs.map((cg) => [cg.condition, cg.graph])),
+    [conditionGraphs]
+  )
+  const firstGraph = firstRef ? graphByCondition.get(firstRef.condition) || null : null
+  const secondGraph = secondRef ? graphByCondition.get(secondRef.condition) || null : null
+  const labelA = firstRef?.condition || 'condition 1'
+  const labelB = secondRef?.condition || 'condition 2'
+  const prefix = side.toLowerCase()
 
   // The two clusters are stable references from the results snapshot, so they are
   // safe (and sufficient) dependencies for the derived-subgraph computation.
@@ -395,9 +418,8 @@ function ComparisonColumn({ side, entry, bundle, onOpen }) {
     [firstCluster, secondCluster]
   )
 
-  // `refs`, `lastClustering` and `graphs` only change when another analysis is
-  // loaded, and `derived` is memoised on the two clusters.
-  const conditionViews = useMemo(() => buildConditionGraphViews(refs, graphs), [refs, graphs])
+  // `refs` and `lastClustering` only change when another analysis is loaded,
+  // and `derived` is memoised on the two clusters.
   const clusterViews = useMemo(
     () => buildClusterViews(refs, lastClustering, derived),
     [refs, lastClustering, derived]
@@ -462,18 +484,101 @@ function ComparisonColumn({ side, entry, bundle, onOpen }) {
         <section className={styles.graphs} data-testid={`compare-graphs-${side.toLowerCase()}`}>
           <GraphPanel
             side={side.toLowerCase()}
-            kind='conditions'
-            title='Condition graphs'
-            views={conditionViews}
-            emptyMessage={bundle.loading ? 'Loading…' : 'No condition graph stored'}
-          />
-          <GraphPanel
-            side={side.toLowerCase()}
             kind='clusters'
             title='Clusters'
             views={clusterViews}
             emptyMessage={bundle.loading ? 'Loading…' : 'No cluster stored'}
+            conflictLabels={{ first: labelA, second: labelB }}
           />
+        </section>
+      )}
+
+      {!bundle.loading && !bundle.error && firstRef && secondRef && (
+        <section className={styles.exports} data-testid={`compare-exports-${prefix}`}>
+          <h3 className={styles.blockTitle}>Downloadable tables</h3>
+          <div className={styles.exportTables}>
+            <ExportableTable
+              title={`Full condition graph · ${labelA}`}
+              description='Every edge of the condition graph with its correlation value.'
+              rows={conditionEdgeRows(firstGraph, labelA)}
+              fileName={`${safeFileName(labelA)}_full_graph_edges.csv`}
+              testId={`compare-export-full-graph-${prefix}`}
+            />
+            <ExportableTable
+              title={`Full condition graph · ${labelB}`}
+              description='Every edge of the condition graph with its correlation value.'
+              rows={conditionEdgeRows(secondGraph, labelB)}
+              fileName={`${safeFileName(labelB)}_full_graph_edges.csv`}
+              testId={`compare-export-full-graph-${prefix}-b`}
+            />
+            <ExportableTable
+              title={`Cluster · ${labelA}`}
+              description='Edges of the cluster subgraph, with the correlation value of each edge.'
+              rows={clusterEdgeRows(firstCluster?.subgraph, labelA)}
+              fileName={`${safeFileName(labelA)}_cluster_edges.csv`}
+              testId={`compare-export-cluster-${prefix}`}
+              emptyLabel='No cluster computed yet.'
+            />
+            <ExportableTable
+              title={`Only in ${labelA} · edges`}
+              description='Edges of the first cluster that are not part of the intersection (same as the "Only in" view).'
+              rows={derivedEdgeRows(derived.exclusiveA.edges, labelA)}
+              fileName={`${safeFileName(labelA)}_only_edges.csv`}
+              testId={`compare-export-exclusive-${prefix}`}
+              emptyLabel='No exclusive edge.'
+            />
+            <ExportableTable
+              title={`Cluster · ${labelB}`}
+              description='Edges of the cluster subgraph, with the correlation value of each edge.'
+              rows={clusterEdgeRows(secondCluster?.subgraph, labelB)}
+              fileName={`${safeFileName(labelB)}_cluster_edges.csv`}
+              testId={`compare-export-cluster-${prefix}-b`}
+              emptyLabel='No cluster computed yet.'
+            />
+            <ExportableTable
+              title={`Only in ${labelB} · edges`}
+              description='Edges of the second cluster that are not part of the intersection (same as the "Only in" view).'
+              rows={derivedEdgeRows(derived.exclusiveB.edges, labelB)}
+              fileName={`${safeFileName(labelB)}_only_edges.csv`}
+              testId={`compare-export-exclusive-${prefix}-b`}
+              emptyLabel='No exclusive edge.'
+            />
+            <ExportableTable
+              title={`Intersection · ${labelA} ∩ ${labelB}`}
+              description='Edges joining the same two nodes in both clusters. Edges with opposite signs keep both correlation values.'
+              rows={intersectionEdgeRows(
+                derived.intersection.edges,
+                safeFileName(labelA),
+                safeFileName(labelB),
+              )}
+              fileName={`compare_${prefix}_intersection_edges.csv`}
+              testId={`compare-export-intersection-${prefix}`}
+              emptyLabel='No shared edge between the two clusters.'
+            />
+            <ExportableTable
+              title='Complement · union without intersection'
+              description='Edges present in exactly one cluster (nodes shared by both clusters are excluded).'
+              rows={derivedEdgeRows(derived.complement.edges, 'complement')}
+              fileName={`compare_${prefix}_complement_edges.csv`}
+              testId={`compare-export-complement-${prefix}`}
+              emptyLabel='The complement is empty.'
+            />
+            <ExportableTable
+              title='Nodes present in only one condition'
+              description='For every node in exactly one cluster: whether it is missing only from the other cluster or from the other condition graph entirely.'
+              rows={nodePresenceRows(
+                firstCluster?.subgraph,
+                secondCluster?.subgraph,
+                firstGraph,
+                secondGraph,
+                labelA,
+                labelB,
+              )}
+              fileName={`compare_${prefix}_nodes_only_in_one_condition.csv`}
+              testId={`compare-export-node-presence-${prefix}`}
+              emptyLabel='Every cluster node is shared by both conditions.'
+            />
+          </div>
         </section>
       )}
     </div>
@@ -490,9 +595,10 @@ export default function ComparisonView({ entryA, entryB, onClose, onOpen }) {
         <div>
           <h1 className={styles.viewTitle}>Comparison</h1>
           <p className={styles.viewSubtitle}>
-            The graphs produced by the two analyses, side by side. Condition graphs and clusters have
-            their own area; use the drop-down to switch, and ⤢ to enlarge a graph. Each analysis keeps
-            its own colour tint: <span className={styles.legendA}>blue</span> for A,{' '}
+            The stored results of the two analyses, side by side. Only the clusters are drawn — use the
+            drop-down to switch between them and ⤢ to enlarge one. Values already shown as parameters
+            are not repeated in the result summary. Each analysis keeps its own colour tint:{' '}
+            <span className={styles.legendA}>blue</span> for A,{' '}
             <span className={styles.legendB}>amber</span> for B.
           </p>
         </div>

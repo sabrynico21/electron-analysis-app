@@ -47,8 +47,12 @@ def _base_dir() -> str:
 
 def _prepare_import_path() -> None:
     base = _base_dir()
-    for candidate in (base, os.path.join(base, "clustering")):
-        if candidate not in sys.path:
+    # SPIEC-EASI lives in the standalone library (spiec-easi-python/src) so the
+    # app and the library share a single source instead of a duplicated copy.
+    repo_root = os.path.dirname(base)
+    spieceasi_src = os.path.join(repo_root, "spiec-easi-python", "src")
+    for candidate in (base, os.path.join(base, "clustering"), spieceasi_src):
+        if os.path.isdir(candidate) and candidate not in sys.path:
             sys.path.insert(0, candidate)
 
 

@@ -71,6 +71,7 @@ export default function SubgraphPlot({
   groupingMode = GROUPING_MODE.ALL,
   seedNode = '',
   controlsDisabled = false,
+  conflictLabels = null,
 }) {
   const svgRef = useRef(null)
   const [zoom, setZoom] = useState(1)
@@ -143,11 +144,35 @@ export default function SubgraphPlot({
     [grouped, limitedNodeIds],
   )
 
+  const maxEdgeMagnitude = useMemo(() => {
+    const magnitudes = limitedEdges.map((edge) => {
+      if (edge.signConflict) {
+        return Math.max(Math.abs(Number(edge.weightA) || 0), Math.abs(Number(edge.weightB) || 0))
+      }
+      return Math.abs(Number(edge.weight) || 0)
+    })
+    const maxValue = Math.max(0, ...magnitudes)
+    return maxValue > 0 ? maxValue : 1
+  }, [limitedEdges])
+
+  const hasConflictEdges = useMemo(
+    () => limitedEdges.some((edge) => edge.signConflict),
+    [limitedEdges],
+  )
+
   const laidOutNodes = useMemo(() => computeLayout(limitedNodes), [limitedNodes])
   const finalNodes = useMemo(
     () => laidOutNodes.map((node) => ({ ...node, ...(manualPositions[node.id] || {}) })),
     [laidOutNodes, manualPositions],
   )
+
+  const maxOverabundance = useMemo(() => {
+    const values = finalNodes
+      .map((node) => Number(node.overabundance))
+      .filter((value) => Number.isFinite(value) && value > 0)
+    const maxValue = Math.max(1, ...values)
+    return maxValue
+  }, [finalNodes])
 
   const nodeMap = useMemo(() => {
     const map = new Map()
@@ -222,6 +247,21 @@ export default function SubgraphPlot({
     setManualPositions({})
   }
 
+  const edgeWidth = (edge) => {
+    const magnitude = edge?.signConflict
+      ? Math.max(Math.abs(Number(edge.weightA) || 0), Math.abs(Number(edge.weightB) || 0))
+      : Math.abs(Number(edge?.weight) || 0)
+    const normalized = clamp(magnitude / maxEdgeMagnitude, 0, 1)
+    return 1 + (normalized * 5)
+  }
+
+  const nodeBorderWidth = (node) => {
+    const ratio = Number(node?.overabundance)
+    const safeRatio = Number.isFinite(ratio) && ratio > 0 ? ratio : 1
+    const normalized = clamp(safeRatio / maxOverabundance, 0.1, 1)
+    return 0.8 + (normalized * 3)
+  }
+
   if (!limitedNodes.length) {
     return <p className={styles.empty}>No subgraph to plot yet.</p>
   }
@@ -234,6 +274,24 @@ export default function SubgraphPlot({
         <button type='button' className={styles.toolButton} disabled={controlsDisabled} onClick={resetView}>Reset</button>
         <span className={styles.zoomInfo}>Zoom {Math.round(zoom * 100)}%</span>
       </div>
+      {hasConflictEdges && (
+        <div className={styles.legend} role='note' aria-label='Edge colour legend'>
+          <span className={styles.legendItem}>
+            <span className={`${styles.legendLine} ${styles.legendPositive}`} /> positive in both
+          </span>
+          <span className={styles.legendItem}>
+            <span className={`${styles.legendLine} ${styles.legendNegative}`} /> negative in both
+          </span>
+          <span className={styles.legendItem}>
+            <span className={`${styles.legendLine} ${styles.legendDashedPosToNeg}`} />{' '}
+            positive in {conflictLabels?.first || 'condition 1'}, negative in {conflictLabels?.second || 'condition 2'}
+          </span>
+          <span className={styles.legendItem}>
+            <span className={`${styles.legendLine} ${styles.legendDashedNegToPos}`} />{' '}
+            negative in {conflictLabels?.first || 'condition 1'}, positive in {conflictLabels?.second || 'condition 2'}
+          </span>
+        </div>
+      )}
       <svg
         ref={svgRef}
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
@@ -257,12 +315,28 @@ export default function SubgraphPlot({
             const target = nodeMap.get(edge.target)
             if (!source || !target) return null
             const numericWeight = Number(edge.weight) || 0
-            const weight = Math.max(2.5, Math.min(5.5, Math.abs(numericWeight || 1) * 3))
-            const edgeClassName = numericWeight > 0
-              ? styles.edgePositive
-              : numericWeight < 0
-                ? styles.edgeNegative
-                : styles.edgeNeutral
+            const weight = edgeWidth(edge)
+            const signClass = (value) => (
+              value > 0 ? styles.edgePositive : value < 0 ? styles.edgeNegative : styles.edgeNeutral
+            )
+            // An edge present in both conditions with opposite signs is drawn as
+            // a dashed line whose colour encodes the direction of the flip.
+            if (edge.signConflict) {
+              const conflictClass = edge.conflictType === 'neg_to_pos'
+                ? styles.edgeConflictNegToPos
+                : styles.edgeConflictPosToNeg
+              return (
+                <line
+                  key={`conflict-${edge.source}-${edge.target}-${idx}`}
+                  x1={source.x}
+                  y1={source.y}
+                  x2={target.x}
+                  y2={target.y}
+                  strokeWidth={weight}
+                  className={`${styles.edge} ${styles.edgeDashed} ${conflictClass}`}
+                />
+              )
+            }
             return (
               <line
                 key={`${edge.source}-${edge.target}-${idx}`}
@@ -271,15 +345,16 @@ export default function SubgraphPlot({
                 x2={target.x}
                 y2={target.y}
                 strokeWidth={weight}
-                className={`${styles.edge} ${edgeClassName}`}
+                className={`${styles.edge} ${signClass(numericWeight)}`}
               />
             )
           })}
 
           {finalNodes.map((node) => {
             const isSeedNode = Boolean(seedNode) && node.id === seedNode
-            const baseRadius = 8
-            const nodeRadius = isSeedNode ? baseRadius + 4 : baseRadius
+            const nodeRadius = 8
+            const strokeWidth = nodeBorderWidth(node)
+            const strokeColor = isSeedNode ? '#f6d365' : (node.kind === 'bacteria' ? '#14543a' : '#6d28d9')
 
             return (
             <g key={node.id}>
@@ -287,12 +362,13 @@ export default function SubgraphPlot({
                 cx={node.x}
                 cy={node.y}
                 r={nodeRadius}
-                className={`${node.kind === 'bacteria' ? styles.bacteria : styles.fungi} ${isSeedNode ? styles.seedNode : ''}`}
+                className={node.kind === 'bacteria' ? styles.bacteria : styles.fungi}
+                style={{ strokeWidth: isSeedNode ? Math.max(3.6, strokeWidth + 2.1) : strokeWidth, stroke: strokeColor }}
                 onMouseDown={(event) => beginNodeDrag(event, node.id)}
               />
               <title>{getLabelAfterPrefix(node.label || node.id)}</title>
               {visibleLabels.has(node.id) && (
-                <text x={node.x + (isSeedNode ? 14 : 10)} y={node.y + 4} className={`${styles.label} ${isSeedNode ? styles.seedLabel : ''}`}>
+                <text x={node.x + 10} y={node.y + 4} className={styles.label}>
                   {getLabelAfterPrefix(node.label || node.id)}
                 </text>
               )}

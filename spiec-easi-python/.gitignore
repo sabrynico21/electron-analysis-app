@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+.env
+.DS_Store
+examples/data/*.csv
+!examples/data/.gitkeep
+
+# Vendored third-party R sources (SpiecEasi/huge) used only for offline
+# reference; never redistributed with this project.
+.tmp-rsrc/

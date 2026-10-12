@@ -10,9 +10,17 @@
 .edgePositive { stroke: #c62828; }
 .edgeNegative { stroke: #1f6fff; filter: drop-shadow(0 0 1px rgba(31, 111, 255, 0.55)); }
 .edgeNeutral { stroke: #6f7782; }
+.edgeDashed { stroke-dasharray: 5 4; }
+.edgeConflictPosToNeg { stroke: #8b0000; filter: drop-shadow(0 0 1px rgba(139, 0, 0, 0.5)); }
+.edgeConflictNegToPos { stroke: #0d47a1; filter: drop-shadow(0 0 1px rgba(13, 71, 161, 0.5)); }
+.legend { display: flex; flex-wrap: wrap; gap: 0.75rem; padding: 0.35rem 0.55rem; border-bottom: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-bg) 96%, var(--color-surface) 4%); font-size: 0.72rem; color: var(--color-text-muted); }
+.legendItem { display: inline-flex; align-items: center; gap: 0.35rem; }
+.legendLine { display: inline-flex; width: 26px; height: 4px; border-radius: 2px; overflow: hidden; }
+.legendPositive { background: #c62828; }
+.legendNegative { background: #1f6fff; }
+.legendDashedPosToNeg { background-image: repeating-linear-gradient(90deg, #8b0000 0 4px, transparent 4px 8px); }
+.legendDashedNegToPos { background-image: repeating-linear-gradient(90deg, #0d47a1 0 4px, transparent 4px 8px); }
 .bacteria { fill: #247a54; cursor: pointer; }
 .fungi { fill: #a855f7; cursor: pointer; }
-.seedNode { stroke: #f6d365; stroke-width: 2.2px; filter: drop-shadow(0 0 3px rgba(246, 211, 101, 0.6)); }
 .label { fill: var(--color-text); font-size: 10px; font-weight: 600; opacity: 0.96; paint-order: stroke fill; stroke: color-mix(in srgb, var(--color-surface) 92%, transparent 8%); stroke-width: 2; }
-.seedLabel { font-size: 12px; font-weight: 800; }
 .empty { margin: 0.25rem 0; color: var(--color-text-muted); font-size: 0.85rem; }

@@ -23,7 +23,19 @@ import tempfile
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import numpy as np
 from scipy.stats import spearmanr
+
+# SPIEC-EASI lives in the standalone library (spiec-easi-python/src) so the app
+# and the library share a single source. When this script is run directly (in
+# development the desktop app spawns `python analysis.py`), make it importable.
+_SPIEC_EASI_SRC = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'spiec-easi-python',
+    'src',
+)
+if os.path.isdir(_SPIEC_EASI_SRC) and _SPIEC_EASI_SRC not in sys.path:
+    sys.path.insert(0, _SPIEC_EASI_SRC)
 
 def report_progress(pct: int):
     print(json.dumps({"progress": pct}), flush=True)
@@ -37,7 +49,11 @@ def _slug(value: str) -> str:
 
 
 def _detect_delimiter(header_line: str) -> str:
-    return '\t' if '\t' in header_line else ','
+    if '\t' in header_line:
+        return '\t'
+    if ';' in header_line:
+        return ';'
+    return ','
 
 
 def _read_table_rows(file_path: str) -> list:
@@ -139,12 +155,17 @@ def _load_abundance_matrices(file_paths: list, known_sample_ids: set[str] | None
     return sample_to_values, ordered_features
 
 
-def _load_metadata_conditions(metadata_paths: list, domain_label: str = 'general') -> dict:
-    """Returns {sample_id: condition_value} from metadata files using Combination_treat2.
-    
+def _load_metadata_conditions(
+    metadata_paths: list,
+    domain_label: str = 'general',
+    condition_column: str = 'Combination_treat2',
+) -> dict:
+    """Returns {sample_id: condition_value} from metadata files.
+
     Args:
         metadata_paths: List of metadata file paths
         domain_label: Label for logging (e.g., 'bacteria', 'fungi', 'general')
+        condition_column: Name of the column holding the experimental condition
     """
     sample_to_condition = {}
     for file_path in metadata_paths:
@@ -153,13 +174,13 @@ def _load_metadata_conditions(metadata_paths: list, domain_label: str = 'general
             continue
 
         keys = list(rows[0].keys())
-        if 'Combination_treat2' not in keys:
-            raise ValueError(f"Metadata file '{file_path}' does not contain Combination_treat2")
+        if condition_column not in keys:
+            raise ValueError(f"Metadata file '{file_path}' does not contain {condition_column}")
         sample_key = keys[0]
 
         for row in rows:
             sample_id = (row.get(sample_key) or '').strip()
-            condition = (row.get('Combination_treat2') or '').strip()
+            condition = (row.get(condition_column) or '').strip()
             if sample_id and condition:
                 sample_to_condition[sample_id] = condition
 
@@ -500,6 +521,159 @@ def _compute_sparcc_for_matrix(
         return corr_matrix, pvalue_matrix
 
 
+def _compute_spieceasi_for_matrix(
+    matrix_by_sample: dict,
+    features: list,
+    sample_ids: list,
+    params: dict,
+    progress_range: tuple[float, float] | None = None,
+) -> tuple[dict, dict, dict]:
+    """Compute SPIEC-EASI MB weights and expose them as correlation-like pairs.
+
+    Edges selected by MB+StARS receive p=0.0 so they pass the p-value threshold;
+    non-selected edges receive p=1.0 and are filtered out by default.
+    """
+    from spieceasi import spiec_easi_mb
+
+    start_pct, end_pct = (progress_range or (0.0, 0.0))
+
+    def _progress(fraction: float) -> None:
+        if progress_range is not None:
+            clamped = min(1.0, max(0.0, fraction))
+            report_progress(int(round(start_pct + (end_pct - start_pct) * clamped)))
+
+    usable_samples = [sample_id for sample_id in sample_ids if sample_id in matrix_by_sample]
+    if len(usable_samples) < 4 or len(features) < 2:
+        return {}, {}, {"selected_lambda": math.nan, "edge_count": 0}
+
+    # Match the FastSpar path behavior: drop constant features (including
+    # all-zero taxa) before model fitting. Such features carry no variance and
+    # are not informative for network inference.
+    features, dropped = _filter_constant_features(features, usable_samples, matrix_by_sample)
+    if dropped:
+        preview = ', '.join(dropped[:20])
+        if len(dropped) > 20:
+            preview += f' … (+{len(dropped) - 20} more)'
+        log(
+            f"  Removed {len(dropped)} constant feature(s) before SPIEC-EASI "
+            f"(zero variance / all-zero across samples): {preview}"
+        )
+    if len(features) < 2:
+        log("  Fewer than 2 varying features remain; skipping SPIEC-EASI matrix")
+        return {}, {}, {"selected_lambda": math.nan, "edge_count": 0}
+
+    _progress(0.05)
+
+    X = np.array(
+        [
+            [float(matrix_by_sample[sample_id].get(feature, 0.0)) for feature in features]
+            for sample_id in usable_samples
+        ],
+        dtype=float,
+    )
+    n_samples, n_taxa = X.shape
+    if n_samples <= n_taxa:
+        log(
+            "  WARNING: SPIEC-EASI MB with n_samples <= n_taxa can be unstable "
+            f"(n_samples={n_samples}, n_taxa={n_taxa})."
+        )
+
+    # Defaults aligned with the R SpiecEasi reference (spiec.easi.default):
+    # nlambda=20, lambda.min.ratio=1e-3, rep.num=20. Kept explicit so the app
+    # and the R golden reference use exactly the same settings.
+    n_lambdas = int(params.get('spieceasiNLambdas', 20) or 20)
+    lambda_min_ratio = float(params.get('spieceasiLambdaMinRatio', 1e-3) or 1e-3)
+    n_subsamples = int(params.get('spieceasiNSubsamples', 20) or 20)
+    stars_threshold = float(params.get('spieceasiStarsThreshold', 0.05) or 0.05)
+    max_iter = int(params.get('spieceasiMaxIter', 10_000) or 10_000)
+    n_jobs = int(params.get('spieceasiJobs', min(4, os.cpu_count() or 1)) or 1)
+    n_jobs = max(1, n_jobs)
+
+    # With very few samples and hundreds of taxa, MB+StARS can require a huge
+    # number of Lasso fits. Reduce defaults in that regime unless the user has
+    # explicitly overridden them.
+    has_user_lambdas = 'spieceasiNLambdas' in params
+    has_user_subsamples = 'spieceasiNSubsamples' in params
+    has_user_max_iter = 'spieceasiMaxIter' in params
+    if n_samples <= 10 and n_taxa >= 200:
+        if not has_user_lambdas:
+            n_lambdas = min(n_lambdas, 10)
+        if not has_user_subsamples:
+            n_subsamples = min(n_subsamples, 8)
+        if not has_user_max_iter:
+            # Intentional deviation from R (which always uses MAX_ITER=10000):
+            # cap iterations for very high-dimensional, tiny-sample regimes to
+            # bound runtime. Documented in docs/AUDIT.md.
+            max_iter = min(max_iter, 3000)
+
+    estimated_model_fits = (n_lambdas * n_subsamples + 1) * n_taxa
+    log(
+        "  SPIEC-EASI workload estimate: "
+        f"{n_lambdas} lambdas x {n_subsamples} subsamples x {n_taxa} taxa "
+        f"(+ final fit) ~= {estimated_model_fits:,} neighborhood Lasso fits"
+    )
+    log(
+        "  SPIEC-EASI settings: "
+        f"n_jobs={n_jobs}, max_iter={max_iter}, "
+        f"lambda_min_ratio={lambda_min_ratio}, stars_threshold={stars_threshold}"
+    )
+
+    def _on_stars_step(done: int, total: int, alpha: float, instability: float) -> None:
+        # Reserve 5% for setup and 95% for StARS+final fit.
+        _progress(0.05 + 0.9 * (done / max(1, total)))
+        log(
+            f"  SPIEC-EASI StARS progress: {done}/{total} lambdas "
+            f"(alpha={alpha:.6g}, instability={instability:.6f})"
+        )
+
+    try:
+        result = spiec_easi_mb(
+            X,
+            n_lambdas=n_lambdas,
+            lambda_min_ratio=lambda_min_ratio,
+            n_subsamples=n_subsamples,
+            subsample_fraction=0.8,
+            stars_threshold=stars_threshold,
+            sym_rule='or',
+            random_state=17,
+            max_iter=max_iter,
+            n_jobs=n_jobs,
+            require_samples_gt_taxa=False,
+            stars_progress_callback=_on_stars_step,
+        )
+    except Exception as exc:
+        raise RuntimeError(f'SPIEC-EASI MB failed: {exc}') from exc
+
+    _progress(1.0)
+
+    corr_matrix = {feature: {} for feature in features}
+    pval_matrix = {feature: {} for feature in features}
+    edge_count = 0
+    for i, left in enumerate(features):
+        for j in range(i + 1, len(features)):
+            right = features[j]
+            is_edge = int(result.adjacency[i, j]) != 0
+            if is_edge:
+                correlation = float(result.weights[i, j])
+                p_value = 0.0
+                edge_count += 1
+            else:
+                correlation = 0.0
+                p_value = 1.0
+            corr_matrix[left][right] = correlation
+            corr_matrix[right][left] = correlation
+            pval_matrix[left][right] = p_value
+            pval_matrix[right][left] = p_value
+
+    diagnostics = {
+        'selected_lambda': float(result.selected_lambda),
+        'edge_count': edge_count,
+        'n_samples': int(X.shape[0]),
+        'n_taxa': int(X.shape[1]),
+    }
+    return corr_matrix, pval_matrix, diagnostics
+
+
 def _get_pair_stat(
     corr_matrix: dict,
     pval_matrix: dict,
@@ -593,8 +767,8 @@ def _build_condition_pairs(
     fungi_sample_to_condition: dict,
     progress_range: tuple[float, float] | None = None,
 ) -> list:
-    if method not in {'spearman', 'sparcc'}:
-        raise ValueError(f"Unsupported correlation method '{method}'. Use spearman or sparcc")
+    if method not in {'spearman', 'sparcc', 'spieceasi'}:
+        raise ValueError(f"Unsupported correlation method '{method}'. Use spearman, sparcc or spieceasi")
 
     bacteria_condition_samples = {
         sample_id
@@ -622,7 +796,7 @@ def _build_condition_pairs(
     rows = []
     corr_matrix = {}
     pval_matrix = {}
-    if method == 'sparcc':
+    if method in {'sparcc', 'spieceasi'}:
         combined_features = [f'bac::{name}' for name in bacteria_features] + [f'fun::{name}' for name in fungi_features]
         combined_matrix_by_sample = {}
         for sample_id in common_samples:
@@ -632,13 +806,27 @@ def _build_condition_pairs(
             for feature in fungi_features:
                 sample_values[f'fun::{feature}'] = fungi_by_sample[sample_id].get(feature, 0.0)
             combined_matrix_by_sample[sample_id] = sample_values
-        corr_matrix, pval_matrix = _compute_sparcc_for_matrix(
-            combined_matrix_by_sample,
-            combined_features,
-            common_samples,
-            params,
-            progress_range,
-        )
+        if method == 'sparcc':
+            corr_matrix, pval_matrix = _compute_sparcc_for_matrix(
+                combined_matrix_by_sample,
+                combined_features,
+                common_samples,
+                params,
+                progress_range,
+            )
+        else:
+            corr_matrix, pval_matrix, diagnostics = _compute_spieceasi_for_matrix(
+                combined_matrix_by_sample,
+                combined_features,
+                common_samples,
+                params,
+                progress_range,
+            )
+            if diagnostics.get('edge_count', 0) > 0:
+                log(
+                    f"  SPIEC-EASI MB cross-domain selected lambda="
+                    f"{diagnostics['selected_lambda']:.6g} with {diagnostics['edge_count']} edges"
+                )
 
     for bac in bacteria_features:
         for fun in fungi_features:
@@ -655,7 +843,7 @@ def _build_condition_pairs(
             if len(x_values) < 3:
                 continue
 
-            if method == 'sparcc':
+            if method in {'sparcc', 'spieceasi'}:
                 correlation, p_value = _get_pair_stat(
                     corr_matrix,
                     pval_matrix,
@@ -693,6 +881,68 @@ def _build_both_domain_pairs(
     fungi_sample_to_condition: dict,
     progress_range: tuple[float, float] | None = None,
 ) -> list:
+    if method == 'spieceasi':
+        bacteria_condition_samples = {
+            sample_id
+            for sample_id, sample_condition in bacteria_sample_to_condition.items()
+            if sample_condition == condition
+        }
+        fungi_condition_samples = {
+            sample_id
+            for sample_id, sample_condition in fungi_sample_to_condition.items()
+            if sample_condition == condition
+        }
+        common_samples = sorted(
+            bacteria_condition_samples
+            & fungi_condition_samples
+            & set(bacteria_by_sample.keys())
+            & set(fungi_by_sample.keys())
+        )
+
+        combined_features = [f'bac::{name}' for name in bacteria_features] + [f'fun::{name}' for name in fungi_features]
+        combined_matrix_by_sample = {}
+        for sample_id in common_samples:
+            sample_values = {}
+            for feature in bacteria_features:
+                sample_values[f'bac::{feature}'] = bacteria_by_sample[sample_id].get(feature, 0.0)
+            for feature in fungi_features:
+                sample_values[f'fun::{feature}'] = fungi_by_sample[sample_id].get(feature, 0.0)
+            combined_matrix_by_sample[sample_id] = sample_values
+
+        corr_matrix, pval_matrix, diagnostics = _compute_spieceasi_for_matrix(
+            combined_matrix_by_sample,
+            combined_features,
+            common_samples,
+            params,
+            progress_range,
+        )
+
+        rows = []
+        for i, left in enumerate(combined_features):
+            for j in range(i + 1, len(combined_features)):
+                right = combined_features[j]
+                correlation, p_value = _get_pair_stat(corr_matrix, pval_matrix, left, right)
+                if math.isnan(correlation) or math.isnan(p_value):
+                    continue
+                left_kind, left_name = ('bacteria', left[5:]) if left.startswith('bac::') else ('fungi', left[5:])
+                right_kind, right_name = ('bacteria', right[5:]) if right.startswith('bac::') else ('fungi', right[5:])
+                rows.append({
+                    'row': left_name,
+                    'column': right_name,
+                    'cor': correlation,
+                    'p': p_value,
+                    'method': method,
+                    'condition': condition,
+                    'row_kind': left_kind,
+                    'column_kind': right_kind,
+                })
+
+        log(
+            f"  Combined pairs (SPIEC-EASI): total={len(rows)}, selected_edges="
+            f"{diagnostics.get('edge_count', 0)}, selected_lambda={diagnostics.get('selected_lambda', math.nan):.6g}"
+        )
+        return rows
+
     # In combined mode, include all biologically relevant edges:
     # 1) bacteria-bacteria, 2) fungi-fungi, 3) bacteria-fungi.
     # Split the progress window evenly across the three sub-matrices.
@@ -747,8 +997,8 @@ def _build_same_domain_pairs(
     kind_label: str,
     progress_range: tuple[float, float] | None = None,
 ) -> list:
-    if method not in {'spearman', 'sparcc'}:
-        raise ValueError(f"Unsupported correlation method '{method}'. Use spearman or sparcc")
+    if method not in {'spearman', 'sparcc', 'spieceasi'}:
+        raise ValueError(f"Unsupported correlation method '{method}'. Use spearman, sparcc or spieceasi")
 
     condition_samples = {
         sample_id
@@ -767,14 +1017,28 @@ def _build_same_domain_pairs(
     rows = []
     corr_matrix = {}
     pval_matrix = {}
-    if method == 'sparcc':
-        corr_matrix, pval_matrix = _compute_sparcc_for_matrix(
-            domain_by_sample,
-            domain_features,
-            common_samples,
-            params,
-            progress_range,
-        )
+    if method in {'sparcc', 'spieceasi'}:
+        if method == 'sparcc':
+            corr_matrix, pval_matrix = _compute_sparcc_for_matrix(
+                domain_by_sample,
+                domain_features,
+                common_samples,
+                params,
+                progress_range,
+            )
+        else:
+            corr_matrix, pval_matrix, diagnostics = _compute_spieceasi_for_matrix(
+                domain_by_sample,
+                domain_features,
+                common_samples,
+                params,
+                progress_range,
+            )
+            if diagnostics.get('edge_count', 0) > 0:
+                log(
+                    f"  SPIEC-EASI MB {kind_label} selected lambda="
+                    f"{diagnostics['selected_lambda']:.6g} with {diagnostics['edge_count']} edges"
+                )
 
     for i in range(len(domain_features)):
         left = domain_features[i]
@@ -793,7 +1057,7 @@ def _build_same_domain_pairs(
             if len(x_values) < 3:
                 continue
 
-            if method == 'sparcc':
+            if method in {'sparcc', 'spieceasi'}:
                 correlation, p_value = _get_pair_stat(corr_matrix, pval_matrix, left, right)
             else:
                 correlation, p_value = _compute_spearman(x_values, y_values)
@@ -835,7 +1099,7 @@ def _write_pairs_csv(job_id: str, condition: str, rows: list) -> str:
     return output_path
 
 
-def _build_graph_from_pairs(rows: list, p_value_threshold: float) -> dict:
+def _build_graph_from_pairs(rows: list, p_value_threshold: float, overabundance_by_node: dict | None = None) -> dict:
     significant_rows = [row for row in rows if row['p'] <= p_value_threshold]
     node_ids = set()
     node_kinds = {}
@@ -856,12 +1120,14 @@ def _build_graph_from_pairs(rows: list, p_value_threshold: float) -> dict:
         })
 
     nodes = []
+    overabundance_by_node = overabundance_by_node or {}
     for node_id in sorted(node_ids):
         kind = node_kinds.get(node_id, 'feature')
         nodes.append({
             'id': node_id,
             'label': node_id,
             'kind': kind,
+            'overabundance': float(overabundance_by_node.get((node_id, kind), 1.0)),
         })
 
     return {
@@ -909,6 +1175,69 @@ def _condition_sample_stats(
     return stats
 
 
+def _mean_by_feature_for_samples(sample_ids: set[str], by_sample: dict, features: list) -> dict:
+    means = {}
+    for feature in features:
+        values = []
+        for sample_id in sample_ids:
+            sample_values = by_sample.get(sample_id)
+            if not sample_values:
+                continue
+            value = sample_values.get(feature)
+            if value is None:
+                continue
+            values.append(float(value))
+        means[feature] = (sum(values) / len(values)) if values else 0.0
+    return means
+
+
+def _compute_overabundance_map(
+    condition: str,
+    dataset_type: str,
+    bacteria_by_sample: dict,
+    bacteria_features: list,
+    bacteria_sample_to_condition: dict,
+    fungi_by_sample: dict,
+    fungi_features: list,
+    fungi_sample_to_condition: dict,
+) -> dict:
+    overabundance = {}
+
+    if dataset_type in {'bacteria', 'both'}:
+        condition_samples = {
+            sample_id
+            for sample_id, sample_condition in bacteria_sample_to_condition.items()
+            if sample_condition == condition and sample_id in bacteria_by_sample
+        }
+        overall_samples = set(bacteria_by_sample.keys())
+        condition_means = _mean_by_feature_for_samples(condition_samples, bacteria_by_sample, bacteria_features)
+        overall_means = _mean_by_feature_for_samples(overall_samples, bacteria_by_sample, bacteria_features)
+
+        for feature in bacteria_features:
+            overall = overall_means.get(feature, 0.0)
+            condition_mean = condition_means.get(feature, 0.0)
+            ratio = condition_mean / overall if overall > 0 else 1.0
+            overabundance[(feature, 'bacteria')] = float(ratio)
+
+    if dataset_type in {'fungi', 'both'}:
+        condition_samples = {
+            sample_id
+            for sample_id, sample_condition in fungi_sample_to_condition.items()
+            if sample_condition == condition and sample_id in fungi_by_sample
+        }
+        overall_samples = set(fungi_by_sample.keys())
+        condition_means = _mean_by_feature_for_samples(condition_samples, fungi_by_sample, fungi_features)
+        overall_means = _mean_by_feature_for_samples(overall_samples, fungi_by_sample, fungi_features)
+
+        for feature in fungi_features:
+            overall = overall_means.get(feature, 0.0)
+            condition_mean = condition_means.get(feature, 0.0)
+            ratio = condition_mean / overall if overall > 0 else 1.0
+            overabundance[(feature, 'fungi')] = float(ratio)
+
+    return overabundance
+
+
 def _condition_sample_stats_both(
     condition: str,
     bacteria_sample_to_condition: dict,
@@ -948,15 +1277,22 @@ def run(job_id: str, files: dict, params: dict) -> dict:
 
     dataset_type = params.get("datasetType")
     correlation_method = str(params.get("correlationMethod") or 'spearman').lower()
+    condition_column = str(params.get("conditionColumn") or 'Combination_treat2').strip() or 'Combination_treat2'
     condition_a = params.get("conditionA")
     condition_b = params.get("conditionB")
     grouping_mode = params.get('groupingMode', 'all')
     p_value_threshold = float(params.get('pValueThreshold', 0.05))
+    # Minimum |correlation| for an edge to enter the graph. 0 disables the
+    # filter; a positive value keeps both strong positive and strong negative
+    # edges and drops the weak ones on either side.
+    correlation_threshold = abs(float(params.get('correlationThreshold', 0) or 0))
 
     log(f"Starting analysis for job {job_id}")
     log(f"Dataset type: {dataset_type}")
     log(f"Correlation method: {correlation_method}")
     log(f"Grouping mode: {grouping_mode}")
+    log(f"Correlation filter (min |r|): {correlation_threshold}")
+    log(f"Condition column: {condition_column}")
     log(f"Condition comparison: {condition_a} vs {condition_b}")
     log(f"Bacteria files: {bacteria_files}")
     log(f"Fungi files: {fungi_files}")
@@ -978,17 +1314,21 @@ def run(job_id: str, files: dict, params: dict) -> dict:
         raise ValueError('conditionA and conditionB must be different')
     if grouping_mode not in {'all', 'phylum', 'genus'}:
         raise ValueError("groupingMode must be one of: all, phylum, genus")
-    if correlation_method not in {'spearman', 'sparcc'}:
-        raise ValueError("correlationMethod must be one of: spearman, sparcc")
+    if correlation_method not in {'spearman', 'sparcc', 'spieceasi'}:
+        raise ValueError("correlationMethod must be one of: spearman, sparcc, spieceasi")
+    if correlation_threshold < 0 or correlation_threshold > 1:
+        raise ValueError("correlationThreshold must be between 0 and 1")
 
     # Load metadata separately for each domain
     bacteria_sample_to_condition = _load_metadata_conditions(
         bacteria_metadata_files,
-        'Bacteria'
+        'Bacteria',
+        condition_column,
     ) if bacteria_metadata_files else {}
     fungi_sample_to_condition = _load_metadata_conditions(
         fungi_metadata_files,
-        'Fungi'
+        'Fungi',
+        condition_column,
     ) if fungi_metadata_files else {}
 
     # Combine metadata for loading abundance matrices (for transpose detection)
@@ -1125,14 +1465,34 @@ def run(job_id: str, files: dict, params: dict) -> dict:
             )
 
         report_progress(25 + idx * 30)
-        log(f"Filtering significant pairs for condition '{condition}' (p <= {p_value_threshold})")
-        filtered_pairs = [row for row in all_pairs if row['p'] <= p_value_threshold]
+        log(
+            f"Filtering pairs for condition '{condition}' "
+            f"(p <= {p_value_threshold}, |r| >= {correlation_threshold})"
+        )
+        significant_pairs = [row for row in all_pairs if row['p'] <= p_value_threshold]
+        filtered_pairs = [
+            row for row in significant_pairs
+            if abs(float(row['cor'])) >= correlation_threshold
+        ]
         log(
             f"  All pairs computed: {len(all_pairs)} | "
-            f"Significant (p ≤ {p_value_threshold}): {len(filtered_pairs)}"
+            f"Significant (p ≤ {p_value_threshold}): {len(significant_pairs)} | "
+            f"After |r| ≥ {correlation_threshold}: {len(filtered_pairs)}"
         )
         pair_file_path = _write_pairs_csv(job_id, condition, filtered_pairs)
-        graph = _build_graph_from_pairs(filtered_pairs, p_value_threshold)
+        overabundance_map = _compute_overabundance_map(
+            condition,
+            dataset_type,
+            bacteria_by_sample,
+            bacteria_features,
+            bacteria_sample_to_condition,
+            fungi_by_sample,
+            fungi_features,
+            fungi_sample_to_condition,
+        )
+
+        graph = _build_graph_from_pairs(filtered_pairs, p_value_threshold, overabundance_map)
+        graph['stats']['correlation_threshold'] = correlation_threshold
         graph_id = f"{job_id}:{_slug(condition)}"
         graph['stats'].update(sample_stats)
         condition_graphs.append({
@@ -1174,6 +1534,7 @@ def run(job_id: str, files: dict, params: dict) -> dict:
             "selected_conditions": [c for c in selected_conditions if c],
             "grouping_mode": grouping_mode,
             "p_value_threshold": p_value_threshold,
+            "correlation_threshold": correlation_threshold,
             "p_value":   0.0312,
             "statistic": 4.721,
             "status":    "significant",

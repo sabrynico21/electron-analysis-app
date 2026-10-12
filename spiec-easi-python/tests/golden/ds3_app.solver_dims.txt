@@ -1,0 +1,3 @@
+d=30
+n_lambda=25
+n_sub=20
