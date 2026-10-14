@@ -78,7 +78,7 @@ def _read_counts(path: Path) -> tuple[list[str], list[str], dict]:
         sample_id = cells[0]
         sample_ids.append(sample_id)
         matrix_by_sample[sample_id] = {
-            feat: float(val) for feat, val in zip(features, cells[1:])
+            feat: float(val) for feat, val in zip(features, cells[1:], strict=False)
         }
     return features, sample_ids, matrix_by_sample
 
@@ -300,12 +300,21 @@ def _tiny_params(job_id: str, **extra) -> dict:
     }
 
 
-def _run_backend(binary: list[str], params: dict, tmp_path: Path, name: str) -> tuple[int, str, dict]:
+def _run_backend(
+    binary: list[str], params: dict, tmp_path: Path, name: str
+) -> tuple[int, str, dict]:
     params_path = tmp_path / f"{name}.params.json"
     result_path = tmp_path / f"{name}.result.json"
     params_path.write_text(json.dumps(params))
     proc = subprocess.run(
-        [*binary, "analyze", "--params", str(params_path), "--output", str(result_path)],
+        [
+            *binary,
+            "analyze",
+            "--params",
+            str(params_path),
+            "--output",
+            str(result_path),
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

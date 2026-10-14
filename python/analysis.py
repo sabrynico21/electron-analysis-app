@@ -10,17 +10,16 @@ Regular log output goes to stdout as plain text.
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import sys
-import time
 import csv
+import json
 import math
-import warnings
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
-
+import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
@@ -363,7 +362,7 @@ def _compute_sparcc_for_matrix(
     def _progress(fraction: float) -> None:
         if progress_range is not None:
             clamped = min(1.0, max(0.0, fraction))
-            report_progress(int(round(start_pct + (end_pct - start_pct) * clamped)))
+            report_progress(round(start_pct + (end_pct - start_pct) * clamped))
 
     usable_samples = [sample_id for sample_id in sample_ids if sample_id in matrix_by_sample]
     if len(usable_samples) < 3 or len(features) < 2:
@@ -482,8 +481,7 @@ def _compute_sparcc_for_matrix(
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_bootstrap_correlation, i): i for i in range(permutations)}
-            done = 0
-            for future in as_completed(futures):
+            for done, future in enumerate(as_completed(futures), start=1):
                 index = futures[future]
                 code, tail = future.result()
                 if code != 0:
@@ -491,7 +489,6 @@ def _compute_sparcc_for_matrix(
                         f'fastspar bootstrap correlation {index} failed (exit {code}): '
                         f'{tail or "unknown error"}'
                     )
-                done += 1
                 elapsed = time.perf_counter() - _bootstrap_start
                 log(
                     f"    SparCC bootstrap corr {done}/{permutations} "
@@ -549,7 +546,7 @@ def _compute_spieceasi_for_matrix(
     def _progress(fraction: float) -> None:
         if progress_range is not None:
             clamped = min(1.0, max(0.0, fraction))
-            report_progress(int(round(start_pct + (end_pct - start_pct) * clamped)))
+            report_progress(round(start_pct + (end_pct - start_pct) * clamped))
 
     usable_samples = [sample_id for sample_id in sample_ids if sample_id in matrix_by_sample]
     if len(usable_samples) < 4 or len(features) < 2:
@@ -1394,7 +1391,7 @@ def run(job_id: str, files: dict, params: dict) -> dict:
         'fungi',
     ) if fungi_by_sample else ({}, [])
     
-    log(f"Loaded abundance matrices:")
+    log("Loaded abundance matrices:")
     log(f"  Bacteria: {len(bacteria_by_sample)} samples × {len(bacteria_features)} features")
     log(f"  Fungi: {len(fungi_by_sample)} samples × {len(fungi_features)} features")
 
@@ -1404,14 +1401,14 @@ def run(job_id: str, files: dict, params: dict) -> dict:
         log(f"  Bacteria/bacteria_metadata sample overlap: {bacteria_overlap}/{len(bacteria_sample_to_condition)} "
             f"(missing: {bacteria_missing})")
         if bacteria_overlap == 0 and dataset_type in {'bacteria', 'both'}:
-            log(f"  WARNING: No overlap between bacteria and bacteria metadata samples!")
+            log("  WARNING: No overlap between bacteria and bacteria metadata samples!")
     if fungi_by_sample:
         fungi_overlap = len(set(fungi_by_sample.keys()) & set(fungi_sample_to_condition.keys()))
         fungi_missing = len(set(fungi_sample_to_condition.keys()) - set(fungi_by_sample.keys()))
         log(f"  Fungi/fungi_metadata sample overlap: {fungi_overlap}/{len(fungi_sample_to_condition)} "
             f"(missing: {fungi_missing})")
         if fungi_overlap == 0 and dataset_type in {'fungi', 'both'}:
-            log(f"  WARNING: No overlap between fungi and fungi metadata samples!")
+            log("  WARNING: No overlap between fungi and fungi metadata samples!")
 
     # Build graph artifacts for selected conditions only.
     selected_conditions = [condition_a, condition_b]
@@ -1631,7 +1628,7 @@ def main():
 
         log(f"Results written to {result_path}")
         sys.exit(0)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - top-level CLI guard: report and exit
         print(f"[ERROR] {exc}", file=sys.stderr)
         sys.exit(1)
 
