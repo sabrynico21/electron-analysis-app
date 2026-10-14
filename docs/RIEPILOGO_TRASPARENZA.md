@@ -12,7 +12,7 @@ ciascuna dopo il controllo del **2026-10-14**.
 |---|---|---|
 | Esito dei job CI su Windows e macOS | Nel repository c'è il file `.github/workflows/ci.yml`, che dichiara *cosa* eseguiranno i job, ma nessun esito registrato. Perciò l'equivalenza su quelle piattaforme è una promessa, non una prova | I log dei job, oppure un artefatto di esecuzione committato |
 | Misure "FASE 1" (per esempio 2425.5 s, 4933.3 s, 8726.93 s, 10.740 s) | Sono registrate nei documenti e datate, ma non rieseguite ora | Riesecuzione, o gli artefatti JSON in `benchmarks/` (presenti per alcune, non per tutte) |
-| Risultato delle suite lente di oggi (51 test in 1513.8 s) | È un'esecuzione locale, non un artefatto salvato; i documenti citano esecuzioni precedenti leggermente diverse (`50 passed in 1445.48 s`, `12 passed in 246 s`) | Un report committato o un job CI |
+| Risultato delle suite lente | È un'esecuzione locale (`51 passed in 1414.1 s`, 2026-10-14), non un artefatto salvato; i documenti citano esecuzioni precedenti leggermente diverse (`50 passed in 1445.48 s`, `12 passed in 246 s`) | Un report committato o un job CI |
 | Contenuto dei file di riferimento **prima** del 2026-10-14 | Il manifest SHA-256 dimostra la non-modifica **solo da quando esiste**. Per la storia precedente serve `git` | `git diff` contro un tag (vedi §3) |
 | Idoneità degli installatori pubblicati (Windows, Linux, AppImage) | Il README li descrive; nel repository non c'è un test che li validi | Un test end-to-end sull'artefatto di release |
 | Rapporti con R citati senza build di riferimento (per esempio "1.57×") | Numeri corretti ma riferiti a build diverse dello stesso caso | Citare sempre build + data (fatto il 2026-10-14 in tutti i documenti) |

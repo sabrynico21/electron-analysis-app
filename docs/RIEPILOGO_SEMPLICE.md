@@ -61,8 +61,8 @@ Legenda esito: "passa" = esito dell'ultima esecuzione su questa macchina
 | 13. Equivalenza statistica senza gli indici di R | Ognuno estrae i propri subcampioni (uso reale) | 2 casi × 30 seed: curve medie e reti ottenute | Passa. Curve entro 0.011 e 0.0096; reti vuote (proprietà dei dati) |
 | 14. Checksum dei file di riferimento | Nessun cambiamento nascosto | SHA-256 ricalcolato e confrontato con la lista salvata | Passa. 464 voci su 4 alberi, tutte combaciano (**da oggi in poi**) |
 
-Totale: **153 test** (102 veloci + 51 lenti). Ultima esecuzione: 102 veloci in 21.0 s e 51 lenti
-in 1513.8 s (25 min 14 s), tutti passati.
+Totale: **153 test** (102 veloci + 51 lenti). Ultima esecuzione completa sullo stato attuale:
+102 veloci in 21.0 s e 51 lenti in **1414.1 s (23 min 34 s)**, tutti passati.
 
 ---
 
