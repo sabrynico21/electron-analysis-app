@@ -527,11 +527,16 @@ def _compute_spieceasi_for_matrix(
     sample_ids: list,
     params: dict,
     progress_range: tuple[float, float] | None = None,
+    subsamples: list | None = None,
 ) -> tuple[dict, dict, dict]:
     """Compute SPIEC-EASI MB weights and expose them as correlation-like pairs.
 
     Edges selected by MB+StARS receive p=0.0 so they pass the p-value threshold;
     non-selected edges receive p=1.0 and are filtered out by default.
+
+    ``subsamples`` optionally injects fixed 0-based StARS subsample index arrays,
+    bypassing the internal RNG, so equivalence tests can feed R's exact
+    subsamples. The default (``None``) keeps the normal random behaviour.
     """
     from spieceasi import spiec_easi_mb
 
@@ -585,8 +590,20 @@ def _compute_spieceasi_for_matrix(
     lambda_min_ratio = float(params.get('spieceasiLambdaMinRatio', 1e-3) or 1e-3)
     n_subsamples = int(params.get('spieceasiNSubsamples', 20) or 20)
     stars_threshold = float(params.get('spieceasiStarsThreshold', 0.05) or 0.05)
+    # None -> follow pulsar::.ratcheck (ratio 0.8 for n <= 144, else 10*sqrt(n)/n),
+    # matching the R SpiecEasi reference; an explicit value still overrides it.
+    _raw_frac = params.get('spieceasiSubsampleFraction')
+    subsample_fraction = float(_raw_frac) if _raw_frac else None
     max_iter = int(params.get('spieceasiMaxIter', 10_000) or 10_000)
-    n_jobs = int(params.get('spieceasiJobs', min(4, os.cpu_count() or 1)) or 1)
+    # Frozen (PyInstaller) builds must never spawn a *process* pool: joblib's
+    # loky backend re-executes sys.executable, which for a frozen binary is this
+    # very CLI, so the child dies with "unknown command: -B". Threads are always
+    # safe. The StARS subsamples are independent and aggregated in a fixed
+    # order, so the result is bit-identical for any n_jobs/backend.
+    frozen = bool(getattr(sys, 'frozen', False))
+    prefer = 'threads' if frozen else 'processes'
+    default_jobs = 1 if frozen else min(4, os.cpu_count() or 1)
+    n_jobs = int(params.get('spieceasiJobs', default_jobs) or 1)
     n_jobs = max(1, n_jobs)
 
     # With very few samples and hundreds of taxa, MB+StARS can require a huge
@@ -614,7 +631,7 @@ def _compute_spieceasi_for_matrix(
     )
     log(
         "  SPIEC-EASI settings: "
-        f"n_jobs={n_jobs}, max_iter={max_iter}, "
+        f"n_jobs={n_jobs}, parallel_backend={prefer}, max_iter={max_iter}, "
         f"lambda_min_ratio={lambda_min_ratio}, stars_threshold={stars_threshold}"
     )
 
@@ -632,14 +649,16 @@ def _compute_spieceasi_for_matrix(
             n_lambdas=n_lambdas,
             lambda_min_ratio=lambda_min_ratio,
             n_subsamples=n_subsamples,
-            subsample_fraction=0.8,
+            subsample_fraction=subsample_fraction,
             stars_threshold=stars_threshold,
             sym_rule='or',
             random_state=17,
             max_iter=max_iter,
             n_jobs=n_jobs,
+            prefer=prefer,
             require_samples_gt_taxa=False,
             stars_progress_callback=_on_stars_step,
+            subsamples=subsamples,
         )
     except Exception as exc:
         raise RuntimeError(f'SPIEC-EASI MB failed: {exc}') from exc

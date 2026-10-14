@@ -76,6 +76,7 @@ def spiec_easi_mb(
     tol: float = 1e-4,
     random_state: int = 0,
     n_jobs: int = -1,
+    prefer: str = "processes",
     require_samples_gt_taxa: bool = True,
     stars_progress_callback: Callable[[int, int, float, float], None] | None = None,
 ) -> SpiecEasiMBResult:
@@ -177,6 +178,7 @@ def spiec_easi_mb(
         tol=tol,
         random_state=random_state,
         n_jobs=n_jobs,
+        prefer=prefer,
         on_alpha_done=stars_progress_callback,
     )
 

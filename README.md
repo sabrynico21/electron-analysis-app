@@ -208,13 +208,16 @@ Linux on x64 only.
 
 Current integration defaults for SPIEC-EASI MB:
 
-- `spieceasiNLambdas`: `25`
-- `spieceasiLambdaMinRatio`: `0.01`
+- `spieceasiNLambdas`: `20`
+- `spieceasiLambdaMinRatio`: `0.001`
 - `spieceasiNSubsamples`: `20`
 - `spieceasiStarsThreshold`: `0.05`
 - `spieceasiMaxIter`: `10000`
 - `spieceasiJobs`: `min(4, cpu_count)` (at least `1`)
-- Fixed pipeline settings: `subsample_fraction=0.8`, `sym_rule="or"`, `random_state=17`
+- `spieceasiSubsampleFraction`: unset by default. When unset, the StARS subsample
+  fraction follows the R reference (`pulsar::.ratcheck`): `0.8` for `n <= 144`
+  samples, otherwise `10*sqrt(n)/n`. Set it (e.g. `0.8`) to force a value.
+- Fixed pipeline settings: `sym_rule="or"`, `random_state=17`
 
 Runtime behavior implemented by the app:
 
@@ -226,6 +229,31 @@ Runtime behavior implemented by the app:
   - `spieceasiNLambdas <= 10`
   - `spieceasiNSubsamples <= 8`
   - `spieceasiMaxIter <= 3000`
+
+### Equivalence with R ("Equivalenza con R")
+
+The Python implementation in `spiec-easi-python/` is a translation of the R
+pipeline (SpiecEasi 1.99.0 + huge 2.0.1 + pulsar 0.3.13) and is checked against
+R on generated golden datasets:
+
+- `tests/r_reference/generate_golden.R` and `generate_golden_extended.R` produce
+  17-digit R references; `tests/test_equivalence*.py` compare Python against them
+  step by step (CLR, `lambda.max`, lambda grid, solver path, coefficients, StARS,
+  selection, final adjacency).
+- R's StARS subsample indices are injected into Python, because the two RNGs are
+  not bit-comparable.
+- No comparison tolerance was widened to make a test pass.
+
+Result **on the currently tested cases** (p up to 100, n between 25 and 300,
+dense and sparse data, `p > n`, `n > 144`, both the library and the application
+configuration): every step matches to about `1e-15`–`1e-13`, with one
+numerically indeterminate situation at `lambda = lambda.max` documented in
+`docs/AUDIT.md` §2.E. This is **not** a claim of general equivalence: it holds
+for the tested cases only.
+
+Known and documented deviations (solver arithmetic, StARS RNG, the application's
+reduced `max_iter` cap in the tiny/high-dimensional regime) are listed in
+`docs/AUDIT.md`. Measured runtimes are in `docs/PERFORMANCE.md`.
 
 ### Where your results live
 

@@ -1,7 +1,10 @@
 # AUDIT — Fedeltà della traduzione Python di SPIEC-EASI (metodo MB)
 
-Data: 2026-10-12
-Fase: **1 — Audit (sola lettura)**. Nessun file di codice esistente è stato modificato.
+Data: 2026-10-12 (Fasi 1–3) · aggiornato 2026-10-13 (Fasi A–D).
+Stato: audit completato; correzioni di Fase 3 applicate e verificate con i golden R estesi (Fase B),
+regola di sottocampionamento StARS allineata a `pulsar` (Fase C), test di integrazione
+dell'applicazione (Fase D). Nessun golden esistente è stato modificato e nessuna tolleranza è stata
+allargata.
 
 ## 0. Sorgenti confrontati
 
@@ -106,10 +109,12 @@ Conclusione: **replica fedele** del solver huge (warm-started path), non di glmn
 ### 2.C Default a livello applicativo (`python/analysis.py`)
 
 L'app invoca `spiec_easi_mb` con: `n_lambdas=20`, `lambda_min_ratio=1e-3`, `n_subsamples=20`,
-`subsample_fraction=0.8`, `stars_threshold=0.05`, `sym_rule='or'`, `random_state=17`,
+`subsample_fraction=None`, `stars_threshold=0.05`, `sym_rule='or'`, `random_state=17`,
 `require_samples_gt_taxa=False`. Rispetto ai default di R (tutti allineati in Fase 3):
 - `n_lambdas=20` ✔ (=R), `lambda_min_ratio=1e-3` ✔ (=R), `n_subsamples=20` ✔ (=`rep.num`);
-- `subsample_fraction=0.8` ✔ (=`.ratcheck` per n≤144; per n>144 R userebbe `10√n/n` mentre l'app forza 0.8);
+- `subsample_fraction=None` ✔ (= regola di `.ratcheck`: `0.8` se `n≤144`, altrimenti `10√n/n`),
+  con override esplicito via `spieceasiSubsampleFraction`. **Fase C:** prima l'app forzava `0.8`,
+  divergendo da R per `n>144`;
 - `random_state=17` (R non fissa il seme ⇒ casuale in R, riproducibile in Python);
 - **deviazione intenzionale documentata**: `max_iter` scende a 3000 se `n≤10 & p≥200` (R resta 10000).
 
@@ -127,18 +132,33 @@ Evidenza (Fase 2): ds1/ds2 identici; ds3/ds4 divergevano (instabilità fino a `4
 
 ---
 
-### 2.D Warm start vs cold start nel solver MB (scoperta in Fase 2)
+### 2.E λ = λ.max: risultato numericamente indeterminato (anche in R)
 
-Evidenza dai golden (dataset ds4_r, p=10, n=50, senza zeri):
+A λ = λ.max il modello corretto è quello **vuoto** (nessun coefficiente). Tuttavia λ.max coincide, per
+costruzione, con la correlazione massima `max|cor(X)|`, e in quel punto la coordinata-descendo di
+`huge::mb` cade esattamente sul bordo della soft-threshold: a seconda dell'ordine di accumulo dei
+prodotti scalari il lato a correlazione massima viene tenuto o scartato.
 
-- **Passi deterministici tutti verdi**: CLR `~2e-15`, λ.max `0`, griglia `~1e-16`, coefficienti MB a λ fisso `~1e-13` con **0 edge di differenza**, per **tutti** gli 8 casi.
-- **StARS con indici di R iniettati**: identico per `ds1`, `ds2` (diff `≤6e-17`); **diverso** per `ds3`, `ds4` (diff fino a `4e-2`).
-- Verifica diretta a λ minimo (ds4_r, subcampione 1): le **adiacenze per-subcampione** di Python coincidono con R se R risolve **un solo λ** (cold) — `0` edge di differenza, β entro `3e-12`. Ma i `merge`/instabilità memorizzati da `spiec.easi` provengono dalla **risoluzione dell'intero path in una sola chiamata huge** (warm), che differisce dalla cold di `max|ΔP|≈0.4`.
-- Conferma che R usa il path warm: `trace(pulsar)` mostra che `spiec.easi` passa a pulsar `lambda = path completo`; per ogni subcampione `sparseiCov` risolve tutto il path.
+**Il fenomeno è interno a R** (verificato sui golden, §5): `grid[0]` coincide bit-per-bit con
+`pulsar::getMaxCov(cor(X))` (diff `0`), ma risolvendo `huge::huge(X, method="mb", lambda = max|cor|)`
+sulla **stessa** matrice CLR si ottengono **0 lati per alcuni dataset e 1 lato per altri** — stesso λ,
+dati diversi. Non è quindi un'instabilità da imputare alla traduzione: **a λ = λ.max il risultato è
+numericamente indeterminato anche in R**.
 
-Causa: i dati CLR hanno una dipendenza lineare esatta (le colonne sommano a 0) e, per λ piccoli, l'obiettivo lasso è **piatto/mal condizionato**. Verificato che Python è all'ottimo (valore obiettivo entro `3e-8` da una soluzione sklearn a tolleranza `1e-14`), quindi **non è un bug dell'obiettivo**, ma la superficie ammette soluzioni quasi-ottime con **supporti diversi**; warm e cold ne scelgono una diversa. Conseguenza: l'instabilità StARS può cambiare e, per ds4, il **λ ottimo selezionato cambia** (Python `grid[11]≈1.8e-2` vs R `grid[13]≈8.9e-3`).
+**Scelta intenzionale di Python.** Il solver usa la stessa S per griglia e solver (`huge_correlation`) e,
+coerentemente, a λ = λ.max restituisce **sempre il modello vuoto** (il risultato matematicamente
+corretto). La correzione di Fase 3 su `alpha_max_for_mb` va letta in questo senso: eliminare
+un'incertezza di 1 ULP che faceva sopravvivere artificialmente il lato a correlazione massima.
+Non si replica l'ordine di sommatoria bit-a-bit di huge.
 
-## 3. Riepilogo dei verdetti "DIVERSO" (da correggere/decidere in Fase 3)
+**Trattamento nei test.** In `tests/test_equivalence_extended.py` il passo 9 ammette un'**eccezione
+esplicita e stretta**: se e solo se l'indice λ selezionato è 0 (= λ.max), è tollerata una differenza di
+**al più un lato**, e solo se è esattamente la coppia `argmax|cor|`. In ogni altro caso il confronto
+resta **esatto** (zero lati di differenza).
+
+## 3. Riepilogo dei verdetti "DIVERSO" (stato dopo le Fasi 3 e C)
+
+Tutti i punti elencati sono stati **risolti oppure dichiarati come scelte intenzionali** (dettagli in §2 e §5). L'unica indeterminazione residua è quella a λ = λ.max descritta in §2.E.
 
 | Punto | Natura | Impatto |
 |-------|--------|---------|
@@ -146,6 +166,7 @@ Causa: i dati CLR hanno una dipendenza lineare esatta (le colonne sommano a 0) e
 | `nlambda` default 25 vs 20 (§1/5) | default libreria + app | griglia λ più densa di R |
 | `lambda.min.ratio` default 1e-2 vs 1e-3 (§1/4) | default libreria + app | path λ più corto; possibile λ ottimo fuori griglia |
 | `n_subsamples` default 50 vs 20 (§1/13) | default libreria | più ripetizioni di R (l'app lo corregge a 20) |
+| `subsample_fraction=0.8` forzato dall'app (§2.C) | default applicazione | per `n>144` usava `0.8` invece di `10√n/n` — **risolto in Fase C** |
 | selezione subcampioni / seed (§1/15) | RNG | insiemi di indici diversi ⇒ StARS diverso (iniettabile) |
 | bordo `== thresh` nella scelta indice ottimo (§1/18) | logica di confronto | off-by-one solo in uguaglianza esatta |
 | floor `tol≥1e-4` (§1/10) | convergenza | impossibile essere più stretti di R |
@@ -177,6 +198,37 @@ Golden R a 17 cifre, 4 dataset × 2 config (`ds1..ds4` × `r`/`app`), indici StA
 - Test di bordo selezione (generati da R): **6/6 PASSED**.
 - Suite slow completa: **12 passed in 246 s (~4m06s)**, da ~1h40m.
 
+**Fase B — golden estesi (23 casi generati; 20 eseguiti, p≤50; p=100 in corso):**
+
+| passo | max\|diff\| osservato |
+|---|---|
+| 1 CLR | 1.3e-15 – 3.6e-15 |
+| 2 λ.max | 0 – 3.3e-16 |
+| 3 griglia | 0 – 1.7e-16 |
+| 4 path solver per-subcampione | **0 lati diversi in tutti i 20 casi** |
+| 4b coefficienti | 6.7e-15 – 7.4e-13 |
+| 5 StARS raw | 5.6e-17 – 3.6e-15 |
+| 6 StARS monotono | 0 – 3.2e-15 |
+| 7/8 indice e λ ottimo | 0 – 1.7e-16 (indice sempre uguale) |
+
+Casi: p ∈ {10,20,30,50,100}, n ∈ {25..300}, densi/sparsi (fino al 75% di zeri), `p>n`, `n>144`,
+configurazioni `r` (nλ20/1e-3/rep20) e `app` (nλ25/1e-2/rep20). Esito: passi 1–8 identici;
+l'unica divergenza è il **passo 9**, **1 lato**, in 8/20 casi.
+
+Eccezione λ.max verificata sui golden (§2.E):
+- **8 casi** con indice R = 0: l'unico lato finale di R è **esattamente** la coppia `argmax|cor|`
+  (es. `rand_p10_n30_s201` (7,8)=0.40315831740882058; `pn_zeros_p40_n25_s219` (1,2)=0.59313578070591977;
+  `rand_p20_n50_s205` (2,6)=0.37198908181359475);
+- **6 casi** con indice R = 0 ma R con **0 lati** (modello vuoto): Python coincide esattamente;
+- **6 casi** con indice R = 1.
+
+Tempi: vedi `docs/PERFORMANCE.md`. I tre casi p=100 sono stati eseguiti **per intero**:
+`largep_p100_n80_s215` OK in 2425.5 s, `largep_p100_n200_s216` OK in 4933.3 s,
+`app_largep_p100_n80_s215` OK in 1367.3 s (`3 passed in 8726.93 s`, ~2h25m). In tutti e tre
+**tutti i passi combaciano** (CLR ≤ 3.1e-15, λ.max ≤ 1.1e-16, griglia ≤ 1.1e-16, **0 lati** nel path
+solver per-subcampione, coefficienti ≤ 1.8e-13, StARS ≤ 1.3e-14, `final_edges = 0`): a p=100 **non
+c'è nessuna divergenza**, nemmeno al passo 9.
+
 ## 6. Conclusione (dopo Fase 3)
 
 La pipeline Python MB è ora una traduzione **fedele e verificata** del percorso R: CLR, λ.max, griglia log,
@@ -186,8 +238,181 @@ cummax, regola di selezione `.starsind`, refit finale. Tutti i passi risultano *
 Divergenze rimaste (tutte **intenzionali e documentate**, nessuna altera l'output rispetto a R nella pratica):
 1. **Subsampling RNG** (§1/15): RNG diverso; non riproducibile bit-a-bit, mitigato iniettando gli indici di R.
 2. **Deviazioni numeriche dichiarate** (§2.A): `np.dot` vs cicli scalari, nessun clamp di S in [−1,1], `hit_max_iter` non esposto.
+   A λ = λ.max questo si manifesta come **indeterminazione numerica condivisa con R** (§2.E): a λ.max Python
+   restituisce **sempre** il modello vuoto (scelta intenzionale, matematicamente corretto), mentre `huge::mb`
+   a volte tiene il lato `argmax|cor|`. Nei test estesi è ammessa la sola eccezione stretta descritta in §2.E.
 3. **Scelte intenzionali**: floor `tol≥1e-4`; `max_iter` ridotto a 3000 dall'app in `n≤10 & p≥200` (§1/10);
    ramo sklearn rimosso → `NotImplementedError` (§1/24); guardia `n>p` in libreria (§1/21); pre-filtro colonne costanti nell'app (§1/22).
 4. **NON IMPLEMENTATO**: sostituzione moltiplicativa zeri (§1/2); spaziatura lineare `lambda.log=FALSE` (§1/7).
 
 Nessun passo è **NON VERIFICABILE** quanto a sorgente: tutti letti in R/huge/pulsar e verificati numericamente.
+
+## 7. Estensione C++ del solver MB (`spieceasi._mb_core`) — deviazioni e risultati
+
+**Perché.** Il solver coordinate-descent in Python era il collo di bottiglia (46–112× più lento di R).
+Per ragioni di sola performance è stata compilata **unicamente** la parte MB; CLR, matrice di correlazione,
+griglia λ, StARS, selezione e refit restano in Python e sono condivisi dalle due implementazioni.
+
+**Che cosa è stato tradotto.** `_mb_core.cpp` è una traduzione quasi letterale di `huge_core.cpp`
+`mb` / `mb_partial_residual` / `mb_refine_active`: path warm-started, regola strong sequenziale
+(2λ_i − λ_{i−1}, con 2λ_0 per i = 0), sweep `j = 0…d−1` saltando `m`, pruning, certificazione KKT,
+`threshold_l1` (0 se |x| ≤ thr), indicizzazione column-major `cm(data, nrows, r, c)`, `thol = 1e-4`,
+`MAX_ITER = 10000`. Interfaccia: `solve_mb_path(S, lambda_path, thol, max_iter) → (coefficients, hit_max_iter)`,
+con `S` passata in ordine Fortran e **GIL rilasciato** attorno al nucleo numerico.
+
+### 7.1 Deviazioni dichiarate dell'estensione
+
+1. **Nessun OpenMP** sulle `m = 0…d−1` regressioni: la parallelizzazione cambierebbe l'ordine di
+   accumulazione dei risultati per riga; tenuta la versione a thread singolo e deterministica.
+2. **Nessun `collect_sorted`.** `huge` raccoglie e ordina i candidati dell'active set; la traduzione
+   segue la scansione in ordine di variabile. Il punto fisso (KKT, supporto, coefficienti) è lo stesso,
+   l'ordine di visita no: è la ragione principale per cui i risultati non sono bit-identici a R.
+3. **`hit_max_iter` è esposto** dalla nuova interfaccia (`_mb_core` lo restituisce); in precedenza non
+   era disponibile. Non è usato per alterare il risultato, solo per diagnostica.
+4. **Flag di compilazione** (dettaglio e confronto in `docs/PERFORMANCE.md`):
+   `-std=c++17 -O2 -ffp-contract=off -fno-lto` (`/O2 /fp:precise` su MSVC), **nessun** `-ffast-math`,
+   **nessun** `-march=native`. R compila con `-O2 … -flto=auto -ffat-lto-objects` e senza disattivare
+   la contrazione (default GCC `-ffp-contract=fast`): R *può* quindi usare FMA dove l'estensione no.
+   La scelta è nella direzione conservativa (meno riordino/contrazione = più vicino al riferimento).
+5. **Fallback automatico.** Se `_mb_core` non è importabile, `mb_solver` usa
+   `mb_solver_reference.py` (copia congelata del solver Python puro) ed emette un `RuntimeWarning`
+   esplicito. Il riferimento Python resta quindi la sorgente di verità e la garanzia di funzionamento.
+6. **Nessuna affermazione di equivalenza generale.** Le verifiche sotto valgono **sui casi testati**.
+
+### 7.2 Verifica estensione-vs-riferimento (244 problemi + golden)
+
+| metrica | risultato |
+|---|---|
+| problemi (p 5…60, n 10…150; densi, con zeri, mal condizionati; 6 λ) | 244 |
+| bit-identici al riferimento Python | **0 / 244** |
+| max \|diff\| famiglie non degeneri | **9.470e-14** |
+| max \|diff\| famiglia degenere (collinearità relativa 1e-9) | 1.881e-01 (peggiore: `illcond p=8 n=150 seed=202`) |
+| supporti diversi, famiglie non degeneri | **0 problemi** |
+| supporti diversi, famiglia degenere | 25 problemi / 40 blocchi λ |
+| max \|diff\| sui golden rilasciati | 1.652e-13 |
+
+Quindi: l'estensione **non è bit-identica** né al riferimento Python né a R. Le differenze sono a livello
+1e-13…1e-14 e la struttura scoperta è identica in tutte le famiglie non degeneri.
+
+### 7.3 Famiglia degenere: perché non è risolta (e non lo sarà allargando tolleranze)
+
+Nei casi `illcond` la matrice di correlazione ha collinearità relativa ~1e-9: la soluzione lasso non è
+unica e le due implementazioni (e R) cadono in punti diversi dello stesso insieme di minimi. Prove
+raccolte confrontando **entrambe** le implementazioni con `huge`/`pulsar` reali su
+`illcond p=8 n=25 seed=202` (λ indici 2…5; lati diversi = lati con supporto diverso da R):
+
+| λ idx | \|C++ − R\| | lati diversi | \|ref − R\| | lati diversi | nnz R / C++ / ref |
+|---|---|---|---|---|---|
+| 2 | 2.094e-05 | 2 | **9.659e-15** | 0 | 22 / 23 / 22 |
+| 3 | 4.742e-02 | 4 | 3.582e-05 | 2 | 30 / 28 / 29 |
+| 4 | 4.934e-02 | 0 | 1.187e-02 | 0 | 32 / 32 / 32 |
+| 5 | 5.109e-02 | 2 | 1.187e-02 | 0 | 32 / 31 / 32 |
+
+R non privilegia **nessuna** delle due: al λ 2 coincide col riferimento (9.7e-15) e differisce dal C++
+(2.1e-05); al λ 3–5 si allontana da entrambe (1.2e-02…5.1e-02) pur restando i supporti quasi uguali.
+La causa prossima è che `cor` di R e la nostra accumulazione della correlazione differiscono di ~1 ULP,
+e in questo regime quell'1 ULP decide quali coordinate restano attive. **Non è quindi un difetto
+dell'estensione**, e non è stato "risolto" allargando tolleranze: resta riportato.
+
+**Criterio di validità adottato per la famiglia degenere (sostituisce il confronto sui coefficienti).**
+Sui problemi `illcond` si verifica che ciascuna delle due soluzioni sia un **ottimo valido** dello stesso
+problema nodewise ridotto (la coordinata `j == m` è esclusa, come fa `huge`), con due soglie dichiarate
+a priori in `tests/validation_config.py` e derivate dalla tolleranza del solver, non dall'esito:
+
+| controlli | soglia dichiarata | base |
+|---|---|---|
+| residuo KKT `\|\|g_j\| − λ\|` (attivi) e `max(\|g_j\| − λ, 0)` (inattivi), `g = S b − s_m` | `DEGENERATE_KKT_VIOLATION_MAX = 1e-3` | un ordine di grandezza sopra `thol = 1e-4`, su cui `huge` dichiara convergenza |
+| scarto dei valori di obiettivo `0.5 b'Sb − s_m'b + λ\|b\|₁` fra le due implementazioni | `DEGENERATE_OBJECTIVE_GAP_MAX = 1e-5` | un ordine sotto `thol × scala O(1)`, due ordini sotto il λ più piccolo dei path testati |
+
+Il confronto coefficiente-per-coefficiente con la reference su questa famiglia **resta calcolato e
+stampato come informazione** (max \|diff\|, blocchi λ con supporto diverso). Per le famiglie non degeneri
+il criterio stretto è invariato: `rtol 1e-9`/`atol 1e-11` sui coefficienti e uguaglianza esatta dei
+supporti. Nessuna tolleranza è stata allargata e la famiglia non è stata ristretta.
+
+**Valori misurati** su tutta la famiglia degenere dello sweep (**76 problemi** × 6 λ × `p` risposte, entrambe
+le implementazioni): residuo KKT massimo **2.478e-04** — identico per riferimento e core
+(`illcond p=12 n=10 seed=101`, λ n. 5, risposta 8), quindi ≈ 4× sotto la soglia dichiarata; scarto di
+obiettivo massimo **2.390e-06** (`illcond p=60 n=25 seed=202`, λ n. 5, risposta 56), ≈ 4× sotto la soglia.
+Le due soglie non sono state quindi scelte a posteriori per far passare il test: i valori misurati stanno
+circa un fattore 4 sotto i limiti dichiarati a priori. Il fatto che il residuo KKT massimo sia lo **stesso**
+per le due implementazioni indica che nel caso peggiore entrambe raggiungono lo stesso punto; le differenze
+di vertice (25 problemi con supporto diverso, 40 blocchi λ) restano su casi con residuo molto più piccolo.
+
+### 7.5 Che cosa distingue la famiglia 1e-9 dai dati CLR reali (e perché ds3/ds4 passano)
+
+Misure dirette (stessa macchina, `huge_correlation` nostra vs `cor` di R sullo stesso input, via
+`Rscript`; "blocchi λ cambiati" = blocchi in cui il supporto simmetrizzato differisce):
+
+| design | entrate di S diverse da `cor` di R | max \|ΔS\| | λmin di S | perturbazione casuale ±1 ULP: blocchi λ cambiati | stesso solver alimentato con la S di R: blocchi λ cambiati |
+|---|---|---|---|---|---|
+| `ds1_r.clr` (p=10) | 66/100 | 1.94e-16 | −3.6e-16 | media 0.70, max 1 | **0** |
+| `ds2_r.clr` (p=30) | 748/900 | 2.22e-16 | −6.8e-17 | media 0.40, max 1 | **1** (λ n. 0 = λ.max, 1 lato) |
+| `ds3_r.clr` (p=30) | 666/900 | 4.44e-16 | −9.5e-16 | media 0.70, max 1 | **0** |
+| `ds4_r.clr` (p=10) | 74/100 | 4.44e-16 | −4.4e-16 | media 0.55, max 1 | **0** |
+| `illcond p=5 n=15` | 14/25 | 3.33e-16 | −1.2e-18 | media 1.20, max 2 | **2** (λ 0, 4) |
+| `illcond p=8 n=25` | 44/64 | 3.33e-16 | −2.5e-16 | media 3.10, max 4 | **3** (λ 2, 3, 5) |
+| `illcond p=8 n=40` | 48/64 | 3.33e-16 | +1.6e-16 | media 0.25, max 1 | **4** (λ 0, 3, 4, 5) |
+| `illcond p=12 n=40` | 100/144 | 3.33e-16 | +6.4e-17 | media 1.40, max 4 | **2** (λ 2, 4) |
+| `plain p=8 n=40` | 54/64 | 5.55e-16 | +4.7e-02 | media 0.60, max 1 | **0** |
+| `plain p=30 n=100` | 726/900 | 5.55e-16 | +6.3e-03 | media 0.30, max 1 | **0** |
+
+**Perché i golden ds3/ds4 passano.** Non perché siano ben condizionati: la loro matrice di correlazione
+è singolare a livello macchina esattamente come quella dei casi sintetici (λmin ≈ 1e-16), e la nostra S
+differisce da quella di R in 66–748 entrate su 100–900 in **tutti** i dataset. Passano perché la
+differenza di 1 ULP fra le due S **non sposta il vertice selezionato**: alimentando il medesimo solver con
+la matrice di correlazione *di R*, il path risolto è identico su `ds1`, `ds3`, `ds4` (0 blocchi λ
+diversi) e differisce su `ds2` soltanto nel blocco a **λ = λ.max** (1 lato), cioè esattamente il blocco
+già coperto dall'eccezione stretta di §2.E. Il caso `ds2` è quindi la stessa indeterminazione di §2.E,
+non una fragilità nuova.
+
+**Che cosa distingue la famiglia 1e-9.** Il discriminante misurabile è la **sensibilità del vertice**,
+non la singolarità né l'entità di ΔS (simili in tutte le famiglie): sugli stessi dati reali il passaggio
+da S a S_R cambia 0 blocchi λ, nella famiglia sintetica ne cambia 2–4 su 6, **nell'interno del path**
+(non solo a λ.max), e i lati coinvolti sono sempre quelli incidenti alla colonna resa collineare
+(`p=8`: (3,7), (5,7); `p=8 n=40`: (0,7), (1,6), (5,6), (5,7); per costruzione la colonna collineare è
+l'ultima). Con perturbazioni casuali di ±1 ULP si osserva la stessa gerarchia: ≤ 1 blocco su dati reali
+e controlli non degeneri, fino a 4 sui casi sintetici.
+
+**Ipotesi (con le prove sopra, non dimostrata).** Nei dati CLR reali la degenerazione è *strutturale e
+condivisa*: la trasformazione CLR impone la somma a zero delle colonne in entrambe le implementazioni, la
+direzione quasi-nulla è quella di tutti-uni e il termine lineare del lasso lungo di essa è al livello del
+rumore di arrotondamento (misurato: `v·1` = −0.98 / +1.00 / −0.86 per ds1/ds2/ds4, `max_m |v·S[:,m]|` ≈
+1e-16 contro un λ di path di 3e-4…1e-3). Nella famiglia sintetica la collinearità 1e-9 è invece una
+perturbazione *dei dati* su una coppia di colonne il cui prodotto con la risposta non è piccolo, e il
+vertice che coinvolge quella coppia è intrinsecamente instabile: lo stesso 1 ULP basta a spostare il lato
+da una colonna all'altra. In entrambi i casi la proprietà è del **problema**, non dell'implementazione:
+le soluzioni di R si spostano allo stesso modo (§7.3).
+
+### 7.6 Dove va il tempo a p = 100 (misurato)
+
+A `p=100, n=80`, `n_jobs=1`, il **99.7 %** del tempo della pipeline è dentro l'estensione (21 chiamate:
+20 subcampioni StARS + il refit finale); il calcolo della matrice di correlazione pesa 0.2 % e **tutto il
+resto del Python** (CLR, simmetrizzazione, aggregazione StARS, selezione, conversione del grafo) **0.1 %**.
+Il divario residuo rispetto a R (1.57× a p=100) è quindi interno al ciclo coordinate-descent e non è
+recuperabile lato Python.
+
+Esperimenti di build sulla stessa sorgente: passare S da colonna-major a riga-major (stesso elemento
+acceduto, stesso ordine di sommatoria) e compilare a `-O3` restituisce risultati **bit-identici** su 7
+input (i 4 golden CLR, il CLR p=100, un caso `plain` e uno `illcond`) e recupera ≈ 6 % (23.24 s → 22.00 s
+con riga-major a `-O2`, → 21.82 s con `-O3`). La copia C→F imposta dal binding costa 5.2 µs per chiamata
+(0.109 ms in tutto), quindi è irrilevante: il guadagno è nell'accesso non strided. Queste due modifiche
+**non sono state adottate** nella build attuale: la decisione è per la FASE 4. Dettagli e tabelle in
+`docs/PERFORMANCE.md`.
+
+### 7.4 Effetto sui risultati già verificati
+
+Sui benchmark e sulle suite i risultati **non cambiano**: λ selezionato e numero di lati identici tra
+riferimento e C++ in tutti i casi misurati (e identici a R), suite non-slow da 662 s a 18.66 s. I tre
+casi p=100 verificati per intero (§5) non mostrano alcuna divergenza e passano ora in **129.23 s**
+complessivi (29.80 / 81.84 / 17.51 s) contro **8726.93 s** del riferimento, cioè **67.5×**, con
+`final_edges = 0` e 0 lati diversi nel path solver per-subcampione. Numeri e flag: `docs/PERFORMANCE.md`.
+
+**Effetto collaterale noto e preesistente.** `tests/test_r_variability_expanded_scenarios.py::test_stochastic_variability_baseline_expanded_scenarios`
+fallisce. Non è causato dall'estensione: rieseguito con il **solo riferimento Python**
+(`HAVE_CPP_SOLVER = False`) il fallimento è **identico** (stessa tabella: `cross_jaccard = 1.0` contro
+baseline 0.0 + margine 0.08, `py_edges_median = 0.0`, `r_edges_median = 1.0`, `boundary0` 4/4 in tutte
+le sei scene). In tutte le sei scene entrambe le implementazioni selezionano **l'indice λ = 0**, cioè
+λ = λ.max, dove — come dimostrato in §2.E — il risultato è indeterminato anche in R: Python restituisce
+il modello vuoto (scelta intenzionale) e R a volte conserva il lato `argmax|cor|`. È la stessa
+indeterminazione di §2.E osservata a livello di rete finale; i margini di quel test
+(`STOCHASTIC_BASELINE_TOLERANCE`) sono dichiarati a priori e **non** sono stati allargati.

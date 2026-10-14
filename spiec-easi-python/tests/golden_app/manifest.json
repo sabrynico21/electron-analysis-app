@@ -1,0 +1,28 @@
+{
+  "app_plain_p12_n40_s301": {
+    "id": "app_plain_p12_n40_s301",
+    "p": 12,
+    "n": 40,
+    "seed": 301,
+    "nlambda": 20,
+    "lambda_min_ratio": 0.001,
+    "rep_num": 20,
+    "threshold": 0.05,
+    "n_kept_features": 12,
+    "n_sub": 20,
+    "note": "no constant feature"
+  },
+  "app_const_p13_n40_s301": {
+    "id": "app_const_p13_n40_s301",
+    "p": 12,
+    "n": 40,
+    "seed": 301,
+    "nlambda": 20,
+    "lambda_min_ratio": 0.001,
+    "rep_num": 20,
+    "threshold": 0.05,
+    "n_kept_features": 12,
+    "n_sub": 20,
+    "note": "one constant feature (fconst) appended; app must drop it and match the plain golden"
+  }
+}

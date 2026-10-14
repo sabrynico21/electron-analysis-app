@@ -15,6 +15,7 @@ roughly halves the size of the installer.
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import sys
 
@@ -72,6 +73,13 @@ def _run_cluster(argv: list[str]) -> int:
 
 
 def main() -> int:
+    # Frozen builds (PyInstaller): if this executable is re-run as a
+    # multiprocessing worker, the runtime passes its own bootstrap argument
+    # (`--multiprocessing-fork`). freeze_support() consumes it and exits, so it
+    # is never mistaken for one of our sub-commands. It is a no-op in a normal
+    # run and outside frozen builds.
+    multiprocessing.freeze_support()
+
     _configure_stdio()
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
@@ -85,6 +93,18 @@ def main() -> int:
     if command == "cluster":
         _prepare_import_path()
         return _run_cluster(rest)
+
+    if command.startswith("-"):
+        # Not one of our sub-commands: this looks like the interpreter itself
+        # being re-executed by a process pool (joblib/loky passes "-B" as the
+        # first argument). Report it as such instead of "unknown command".
+        print(
+            f"{USAGE}\nunexpected interpreter argument: {command}\n"
+            "(a frozen build must not spawn a process pool; the library uses "
+            "joblib with prefer='threads' when frozen)",
+            file=sys.stderr,
+        )
+        return 2
 
     print(f"{USAGE}\nunknown command: {command}", file=sys.stderr)
     return 2

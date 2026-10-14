@@ -1,0 +1,20 @@
+{
+  "jobId": "tiny-bench",
+  "files": {
+    "bacteria": ["benchmarks/tiny/counts.txt"],
+    "bacteria_metadata": ["benchmarks/tiny/metadata.txt"]
+  },
+  "params": {
+    "datasetType": "bacteria",
+    "correlationMethod": "spieceasi",
+    "conditionColumn": "Combination_treat2",
+    "conditionA": "C1",
+    "conditionB": "C2",
+    "groupingMode": "all",
+    "pValueThreshold": 0.05,
+    "spieceasiNLambdas": 20,
+    "spieceasiLambdaMinRatio": 0.001,
+    "spieceasiNSubsamples": 20,
+    "spieceasiStarsThreshold": 0.05
+  }
+}

@@ -123,6 +123,32 @@ def _instability_from_adjacencies(adjacencies: list[np.ndarray]) -> float:
     return float(np.mean(edge_instability[upper]))
 
 
+def infer_subsample_size(
+    n_samples: int,
+    *,
+    subsample_size: int | None = None,
+    subsample_fraction: float | None = None,
+) -> int:
+    """Resolve the StARS subsample size following ``pulsar::.ratcheck``.
+
+    An explicit ``subsample_size`` (or ``subsample_fraction``) always wins. When
+    neither is given the pulsar default is used: ratio ``0.8`` for ``n <= 144``,
+    otherwise ratio ``10*sqrt(n)/n``; in both cases the size is
+    ``floor(ratio * n)`` as in ``pulsar`` (``floor(n * subsample.ratio)``).
+    """
+    if subsample_size is not None:
+        return int(subsample_size)
+    if subsample_fraction is None:
+        # Match pulsar::.ratcheck defaults.
+        if n_samples > 144:
+            return int(np.floor(10 * np.sqrt(n_samples)))
+        return int(np.floor(0.8 * n_samples))
+    if not 0 < subsample_fraction < 1:
+        msg = "subsample_fraction must be in (0, 1)."
+        raise ValueError(msg)
+    return int(np.floor(subsample_fraction * n_samples))
+
+
 def stars_select(
     X: np.ndarray,
     *,
@@ -137,6 +163,7 @@ def stars_select(
     tol: float = 1e-4,
     random_state: int = 0,
     n_jobs: int = -1,
+    prefer: str = "processes",
     on_alpha_done: Callable[[int, int, float, float], None] | None = None,
     subsamples: Sequence[np.ndarray] | None = None,
 ) -> StARSResult:
@@ -150,6 +177,11 @@ def stars_select(
     Candidate alphas must be non-increasing (sparser to denser). When
     ``subsamples`` is provided, those 0-based index arrays are used directly and
     random subsampling is bypassed.
+
+    ``prefer`` selects the joblib backend used to run the independent subsamples
+    (``"processes"`` by default, preserving historical behaviour). Frozen
+    executables (PyInstaller) must use ``"threads"``: a process pool would
+    re-execute the frozen binary, which is not a valid CLI entry point.
     """
     _require_huge_scale(standardize, "standardized")
     n_samples = X.shape[0]
@@ -191,20 +223,11 @@ def stars_select(
                 raise ValueError(msg)
             subsample_indices.append(arr)
     else:
-        if subsample_size is None:
-            if subsample_fraction is None:
-                # Match pulsar::.ratcheck defaults:
-                # n <= 144  -> subsample ratio 0.8
-                # n > 144   -> subsample size floor(10*sqrt(n))
-                if n_samples > 144:
-                    subsample_size = int(np.floor(10 * np.sqrt(n_samples)))
-                else:
-                    subsample_size = int(np.floor(0.8 * n_samples))
-            else:
-                if not 0 < subsample_fraction < 1:
-                    msg = "subsample_fraction must be in (0, 1)."
-                    raise ValueError(msg)
-                subsample_size = int(np.floor(subsample_fraction * n_samples))
+        subsample_size = infer_subsample_size(
+            n_samples,
+            subsample_size=subsample_size,
+            subsample_fraction=subsample_fraction,
+        )
 
         if subsample_size <= 1 or subsample_size > n_samples:
             msg = (
@@ -220,7 +243,9 @@ def stars_select(
         ]
 
     # One warm-started path solve per subsample (as huge::mb / pulsar fun).
-    adj_paths = Parallel(n_jobs=n_jobs)(
+    # The subsamples are independent, so the result is aggregated in a fixed
+    # order and is identical for every backend/n_jobs.
+    adj_paths = Parallel(n_jobs=n_jobs, prefer=prefer)(
         delayed(_infer_subsample_adjacency_path)(
             X[idx, :],
             alpha_path=alpha_path,
