@@ -1,6 +1,9 @@
 [build-system]
-requires = ["hatchling>=1.25"]
-build-backend = "hatchling.build"
+# setuptools + pybind11 builds the optional compiled MB core (`spieceasi._mb_core`)
+# with no CMake/ninja dependency. The pure-Python solver stays the reference and
+# the automatic fallback when the extension is not importable.
+requires = ["setuptools>=68", "wheel", "pybind11>=2.11"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "spiec-easi-python"
@@ -50,14 +53,14 @@ Homepage = "https://github.com/your-org/spiec-easi-python"
 Repository = "https://github.com/your-org/spiec-easi-python"
 Issues = "https://github.com/your-org/spiec-easi-python/issues"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/spieceasi"]
+[tool.setuptools]
+package-dir = {"" = "src"}
 
-[tool.hatch.build.targets.wheel.sources]
-"src" = ""
+[tool.setuptools.packages.find]
+where = ["src"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"src/spieceasi/py.typed" = "spieceasi/py.typed"
+[tool.setuptools.package-data]
+spieceasi = ["py.typed"]
 
 [tool.black]
 line-length = 88
@@ -105,3 +108,21 @@ markers = [
   "r_validation: tests that compare against the R SpiecEasi implementation",
   "slow: long-running statistical validation and benchmark-oriented tests"
 ]
+
+# ---------------------------------------------------------------------------
+# Wheels for the compiled MB core (`spieceasi._mb_core`).
+# The pure-Python solver stays importable, so a wheel is never *required* — but
+# a wheel that silently lacks the core would be ~100x slower, so `test-command`
+# asserts that the compiled core is present and active.
+# ---------------------------------------------------------------------------
+[tool.cibuildwheel]
+# pybind11/setuptools come from [build-system].requires via build isolation.
+build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
+test-requires = ["pytest"]
+test-command = "python -c \"import spieceasi.mb_solver as m; assert m.HAVE_CPP_SOLVER, 'compiled MB core missing from wheel'; print('solver:', m.active_solver())\""
+
+[tool.cibuildwheel.linux]
+repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
+
+[tool.cibuildwheel.macos]
+repair-wheel-command = "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}"

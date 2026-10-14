@@ -16,6 +16,12 @@ python-dist/
 .pyinstaller-venv/
 .pyinstaller-wine/
 
+# Compiled extension build artifacts (built from src/spieceasi/_mb_core.cpp)
+spiec-easi-python/build/
+spiec-easi-python/src/spieceasi/*.so
+spiec-easi-python/src/spieceasi/*.pyd
+*.egg-info/
+
 # Local scratch data / editor state (not part of the project)
 .vscode/
 /genere_table.txt
