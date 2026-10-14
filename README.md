@@ -220,6 +220,11 @@ Current integration defaults for SPIEC-EASI MB:
 - Parallel backend: **threads** (joblib). The compiled MB core releases the GIL,
   the subsample results are aggregated in a fixed order, and results are
   bit-identical for any worker count (verified for `n_jobs = 1…16`).
+- The packaged (frozen) backend uses **these same defaults**: there is no
+  frozen-specific setting in the code. The values actually used are written to
+  the analysis log
+  (`SPIEC-EASI settings: n_jobs=…, parallel_backend=threads, physical_cores=…`),
+  and an explicit `spieceasiJobs` overrides only the worker count.
 - `spieceasiSubsampleFraction`: unset by default. When unset, the StARS subsample
   fraction follows the R reference (`pulsar::.ratcheck`): `0.8` for `n <= 144`
   samples, otherwise `10*sqrt(n)/n`. Set it (e.g. `0.8`) to force a value.
@@ -254,6 +259,13 @@ at the 1e-13…1e-14 level; identical discovered structure except in a deliberat
 degenerate family), it performs *the same number of coordinate-descent sweeps*
 as `huge`, and the remaining serial gap to R is R's OpenMP parallelism. Details,
 flags and caveats: `docs/PERFORMANCE.md`; packaging: `docs/PACKAGING.md`.
+
+Conditions of that table: Linux x86-64, 4 physical / 8 logical cores, median of 3
+runs, `2026-10-13`; the `n_jobs=1` column is the parallel run forced to one worker
+(serial, after the memory-layout change, the same case is 21.35 s instead of
+22.06 s). The ratio to R at p=100 is therefore quoted as 1.57× (before the layout
+change), 1.52× (serial after it) and 1.54× (one worker of the threaded run): same
+case, same machine, different builds — see `docs/PERFORMANCE.md`.
 
 ### Equivalence with R ("Equivalenza con R")
 

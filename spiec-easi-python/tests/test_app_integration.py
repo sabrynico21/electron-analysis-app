@@ -22,6 +22,7 @@ No golden file is modified and no tolerance is widened.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -300,6 +301,24 @@ def _tiny_params(job_id: str, **extra) -> dict:
     }
 
 
+_SETTINGS_RE = re.compile(
+    r"SPIEC-EASI settings: n_jobs=(\d+), parallel_backend=(\w+), "
+    r"physical_cores=([^,]+), max_iter=(\d+)"
+)
+
+
+def _settings_from_log(log: str) -> dict[str, str]:
+    """Parse the application's own ``SPIEC-EASI settings:`` line."""
+    match = _SETTINGS_RE.search(log)
+    assert match, f"no 'SPIEC-EASI settings' line in the log:\n{log}"
+    return {
+        "n_jobs": match.group(1),
+        "parallel_backend": match.group(2),
+        "physical_cores": match.group(3),
+        "max_iter": match.group(4),
+    }
+
+
 def _run_backend(
     binary: list[str], params: dict, tmp_path: Path, name: str
 ) -> tuple[int, str, dict]:
@@ -333,6 +352,10 @@ def test_frozen_backend_runs_spieceasi_with_app_defaults(tmp_path: Path) -> None
 
     A process pool would re-execute the frozen binary. Regression test for
     "unknown command: -B" (joblib/loky in a PyInstaller bundle).
+
+    The default is also pinned to what the *source* build does (see
+    `docs/PACKAGING.md` §3): **threads** backend and worker count equal to the
+    number of physical cores. There is no frozen-specific branch in the code.
     """
     binary = [str(FROZEN_BACKEND)]
 
@@ -340,14 +363,28 @@ def test_frozen_backend_runs_spieceasi_with_app_defaults(tmp_path: Path) -> None
         binary, _tiny_params("frozen-default"), tmp_path, "default"
     )
     assert rc_default == 0, log_default
-    # the frozen build must select the thread backend (never a process pool)
-    assert "parallel_backend=threads" in log_default, log_default
     assert "unknown command" not in log_default
 
+    # The default the frozen build actually used, read from its own log.
+    settings = _settings_from_log(log_default)
+    assert settings["parallel_backend"] == "threads", log_default
+
+    from spieceasi.runtime import default_n_jobs, physical_core_count
+
+    expected_jobs = default_n_jobs()
+    physical = physical_core_count()
+    assert int(settings["n_jobs"]) == expected_jobs, (settings, log_default)
+    assert settings["physical_cores"] == str(physical), (settings, log_default)
+    if physical is not None:
+        # the worker count comes from the *physical* cores, not the logical ones
+        assert expected_jobs == physical, log_default
+
+    # An explicit override must be honoured and must change nothing else.
     rc_one, log_one, payload_one = _run_backend(
         binary, _tiny_params("frozen-default", spieceasiJobs=1), tmp_path, "jobs1"
     )
     assert rc_one == 0, log_one
+    assert int(_settings_from_log(log_one)["n_jobs"]) == 1, log_one
 
     # identical payload, not merely identical shape
     assert payload_default == payload_one

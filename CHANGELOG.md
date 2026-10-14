@@ -115,6 +115,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   explicitly (`backend.spec` hiddenimports) and a new regression test asserts the
   packaged app logs `SPIEC-EASI solver: cpp`, i.e. it does not silently fall back
   to the reference solver.
+
+  *State of the code after this commit only, superseded later:* the fix pinned the
+  frozen build to `prefer="threads"` **with `n_jobs=1`**, while the library still
+  defaulted to the *loky* (process) backend. That pinning no longer exists: since
+  the change listed above under **Changed**, `threads` is the library default for
+  every build and the desktop app uses the physical-core worker count. There is no
+  frozen-specific branch in the code; the test now asserts the real default
+  (threads + physical cores, read from the log) and the equality of the payload
+  with a forced `n_jobs=1` run.
 - **The packaged (PyInstaller) backend crashed on every SPIEC-EASI run.**
   `stars_select` called `joblib.Parallel(n_jobs=…)` with the default *loky*
   (process) backend. Inside a frozen executable loky re-executes the binary with

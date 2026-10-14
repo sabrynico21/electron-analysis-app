@@ -68,11 +68,22 @@ npm run build:backend          # or: node scripts/build-backend.mjs [--target wi
 * `python/backend.spec` lists `spieceasi.mb_solver`, `spieceasi.mb_solver_reference`,
   `spieceasi._mb_core` and `spieceasi.runtime` in `hiddenimports`, so the compiled
   core is packaged explicitly instead of being discovered by luck.
+* **No frozen-specific defaults.** The packaged backend takes exactly the same
+  path as the source one (`python/analysis.py`, the block above
+  `spiec_easi_mb(...)`): `prefer="threads"` — never a joblib *process* pool,
+  which would re-execute the binary — and the worker count from
+  `spieceasi.runtime.default_n_jobs()`, i.e. the **physical** core count when it
+  can be read, `logical // 2` if not, then 1. The desktop app never sends
+  `spieceasiJobs` (no occurrence in `src/`), so a normal run uses that default.
+  The values actually used are logged as
+  `SPIEC-EASI settings: n_jobs=…, parallel_backend=threads, physical_cores=…`
+  and an explicit `spieceasiJobs` overrides only the worker count.
 * Regression tests (slow, skipped when the bundle is absent):
   * `test_frozen_backend_runs_spieceasi_with_app_defaults` — the packaged binary
     runs a SPIEC-EASI analysis with the app defaults, exit code 0, the thread
-    backend (never a loky process pool, which would re-execute the binary with
-    `-B`), and a payload byte-identical to `n_jobs=1`;
+    backend, the **default worker count read from its own log and matched
+    against `default_n_jobs()` / `physical_core_count()`**, and a payload
+    byte-identical to the same run forced to `n_jobs=1`;
   * `test_frozen_backend_uses_the_compiled_mb_core` — the same run must log
     `SPIEC-EASI solver: cpp`, i.e. the bundle ships *and uses* the compiled core
     rather than the fallback.
@@ -89,6 +100,15 @@ anti-oversubscription rule — is written up under "Future work: OpenMP" in
 ## 5. Startup time of the frozen backend
 
 See `docs/PERFORMANCE.md` for the measured breakdown (import profile, one-folder
-launch, effect of the import changes). Summary: the frozen executable needs about
-+5.3 s over the source run before any computation starts; the decomposition and
-what of it was removed is documented there.
+launch, effect of the import changes). Summary (measured 2026-10-13 on the Linux
+x86-64 development machine, tiny case p=5 n=20, warm median): the frozen
+executable is now **faster** than the source run — `analyze` 1.504 s frozen vs
+1.734 s from source, i.e. **−0.231 s**; the PyInstaller penalty is no longer
+measurable, because pandas is absent from the bundle while the source
+environment has it.
+
+The figure **+5.3 s over the source run** quoted in earlier revisions of this
+document was the FASE 1 measurement (pure-Python solver, 2026-10-11) and is
+superseded: about 9.2 s of the original ≈10 s launch-and-run have since been
+removed (the pure-Python solver, and an eager `scipy.stats` import on a path
+that never uses it).

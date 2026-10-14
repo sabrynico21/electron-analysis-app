@@ -1,10 +1,14 @@
 # AUDIT — Fedeltà della traduzione Python di SPIEC-EASI (metodo MB)
 
-Data: 2026-10-12 (Fasi 1–3) · aggiornato 2026-10-13 (Fasi A–D).
+Data: 2026-10-12 (Fasi 1–3) · aggiornato 2026-10-13 (Fasi A–D) · aggiornato 2026-10-14 (estensione C++,
+layout riga-major, CI; §7.7 sul perimetro di piattaforma).
 Stato: audit completato; correzioni di Fase 3 applicate e verificate con i golden R estesi (Fase B),
 regola di sottocampionamento StARS allineata a `pulsar` (Fase C), test di integrazione
 dell'applicazione (Fase D). Nessun golden esistente è stato modificato e nessuna tolleranza è stata
 allargata.
+
+> **Perimetro.** Tutte le misure e le verifiche di questo documento valgono **solo su Linux x86-64
+> (GCC)**: vedi §7.7. Ogni tabella riporta la data e le condizioni di misura accanto ai numeri.
 
 ## 0. Sorgenti confrontati
 
@@ -156,24 +160,26 @@ esplicita e stretta**: se e solo se l'indice λ selezionato è 0 (= λ.max), è 
 **al più un lato**, e solo se è esattamente la coppia `argmax|cor|`. In ogni altro caso il confronto
 resta **esatto** (zero lati di differenza).
 
-## 3. Riepilogo dei verdetti "DIVERSO" (stato dopo le Fasi 3 e C)
+## 3. Riepilogo dei verdetti "DIVERSO" (stato attuale)
 
-Tutti i punti elencati sono stati **risolti oppure dichiarati come scelte intenzionali** (dettagli in §2 e §5). L'unica indeterminazione residua è quella a λ = λ.max descritta in §2.E.
+I punti sotto sono **risolti oppure scelte intenzionali**: nessuno è una divergenza aperta nella
+configurazione di default dell'app. La colonna "Stato" dice quando e come è stato chiuso, o se è una
+scelta ancora attiva. L'unica indeterminazione residua è quella a λ = λ.max (§2.E).
 
-| Punto | Natura | Impatto |
-|-------|--------|---------|
-| **warm start vs cold start nel path MB (§1/27, §2.D)** | strategia solver | **λ ottimo e rete finale possono differire** nei casi mal condizionati (ds3, ds4) |
-| `nlambda` default 25 vs 20 (§1/5) | default libreria + app | griglia λ più densa di R |
-| `lambda.min.ratio` default 1e-2 vs 1e-3 (§1/4) | default libreria + app | path λ più corto; possibile λ ottimo fuori griglia |
-| `n_subsamples` default 50 vs 20 (§1/13) | default libreria | più ripetizioni di R (l'app lo corregge a 20) |
-| `subsample_fraction=0.8` forzato dall'app (§2.C) | default applicazione | per `n>144` usava `0.8` invece di `10√n/n` — **risolto in Fase C** |
-| selezione subcampioni / seed (§1/15) | RNG | insiemi di indici diversi ⇒ StARS diverso (iniettabile) |
-| bordo `== thresh` nella scelta indice ottimo (§1/18) | logica di confronto | off-by-one solo in uguaglianza esatta |
-| floor `tol≥1e-4` (§1/10) | convergenza | impossibile essere più stretti di R |
-| `max_iter` ridotto nell'app (§1/10) | convergenza | possibili stime non certificate nel regime n≤10 & p≥200 |
-| guardia n>p in libreria (§1/21) | comportamento | errore dove R procede (l'app lo disattiva) |
-| path λ non decrescente accettato (§1/8) | validazione input | input che R rifiuterebbe |
-| pre-filtro colonne costanti nell'app (§1/22) | comportamento | R fallirebbe invece di scartare |
+| Punto | Natura | Stato | Impatto attuale |
+|-------|--------|-------|-----------------|
+| **warm start vs cold start nel path MB (§1/27, §2.D)** | strategia solver | **RISOLTO in Fase 3** | Nessuno: in ds1–ds4 (config `r` e `app`) λ ottimo e rete finale coincidono; la divergenza è storia delle Fasi 1–2 |
+| `nlambda` default 25 vs 20 (§1/5) | default libreria + app | **RISOLTO in Fase 3** (ora 20 in entrambi) | Nessuno |
+| `lambda.min.ratio` default 1e-2 vs 1e-3 (§1/4) | default libreria + app | **RISOLTO in Fase 3** (ora 1e-3 in entrambi) | Nessuno |
+| `n_subsamples` default 50 vs 20 (§1/13) | default libreria | **RISOLTO in Fase 3** (ora 20) | Nessuno |
+| `subsample_fraction=0.8` forzato dall'app (§2.C) | default applicazione | **RISOLTO in Fase C** (ora regola di `.ratcheck`) | Nessuno per `n>144`: l'app usa `10√n/n` come R |
+| selezione subcampioni / seed (§1/15) | RNG | **APERTO per scelta** (non riproducibile) | Gli insiemi di indici differiscono ⇒ StARS diverso. Mitigato iniettando gli indici di R; il caso senza iniezione è coperto da `tests/test_statistical_equivalence.py` |
+| bordo `== thresh` nella scelta indice ottimo (§1/18) | logica di confronto | **RISOLTO in Fase 3** (regola di `.starsind`, warning incluso) | Nessuno; 6 casi di bordo generati da R |
+| floor `tol≥1e-4` (§1/10) | convergenza | **scelta intenzionale attiva** | Impossibile essere più stretti di R; nessun effetto misurato |
+| `max_iter` ridotto nell'app (§1/10) | convergenza | **deviazione intenzionale attiva** (solo `n≤10 & p≥200`) | Possibili stime non certificate in quel regime; R resta a 10000 |
+| guardia n>p in libreria (§1/21) | comportamento | **scelta intenzionale attiva** in libreria | Errore dove R procede; l'app la disattiva (`require_samples_gt_taxa=False`) |
+| validazione del path λ (§1/8) | validazione input | **IDENTICO a huge** (Fase 3) | Python rifiuta un path **crescente** (`ValueError`) come huge: nessun input accettato in più |
+| pre-filtro colonne costanti nell'app (§1/22) | comportamento | **scelta intenzionale attiva** | L'app rimuove le costanti prima della stima: R fallirebbe invece di scartare |
 
 ## 4. Riepilogo dei verdetti "NON IMPLEMENTATO"
 
@@ -184,6 +190,8 @@ Tutti i punti elencati sono stati **risolti oppure dichiarati come scelte intenz
 ## 5. Verifiche numeriche (Fasi 2–3)
 
 Golden R a 17 cifre, 4 dataset × 2 config (`ds1..ds4` × `r`/`app`), indici StARS di R iniettati.
+**Condizioni di misura:** 2026-10-11 (Fase 2) e 2026-10-12 (Fase 3), Linux x86-64, macchina di
+sviluppo, R 4.6.1 + SpiecEasi 1.99.0 + huge 2.0.1 + pulsar 0.3.13, un solo thread.
 
 **Prima delle correzioni (Fase 2):**
 - Passi deterministici (1–5): tutti **EQUIVALENTI** — CLR `≤2e-15`, λ.max `≤3e-16`, griglia `≤2e-16`,
@@ -310,6 +318,10 @@ quindi l'output non dipende dal numero di worker. È documentata come default in
 | supporti diversi, famiglia degenere | 25 problemi / 40 blocchi λ |
 | max \|diff\| sui golden rilasciati | 1.652e-13 |
 
+**Condizioni di misura:** 2026-10-13, Linux x86-64 (GCC), macchina di sviluppo, estensione compilata
+`-O2 -ffp-contract=off -fno-lto`, un solo thread per lato; riferimento = solver Python puro
+(`mb_solver_reference.py`).
+
 Quindi: l'estensione **non è bit-identica** né al riferimento Python né a R. Le differenze sono a livello
 1e-13…1e-14 e la struttura scoperta è identica in tutte le famiglie non degeneri.
 
@@ -404,27 +416,47 @@ le soluzioni di R si spostano allo stesso modo (§7.3).
 
 ### 7.6 Dove va il tempo a p = 100 (misurato)
 
+**Condizioni di misura:** 2026-10-13, Linux x86-64 (GCC), macchina di sviluppo, `p=100, n=80`,
+`n_jobs=1`, estensione compilata.
+
 A `p=100, n=80`, `n_jobs=1`, il **99.7 %** del tempo della pipeline è dentro l'estensione (21 chiamate:
 20 subcampioni StARS + il refit finale); il calcolo della matrice di correlazione pesa 0.2 % e **tutto il
 resto del Python** (CLR, simmetrizzazione, aggregazione StARS, selezione, conversione del grafo) **0.1 %**.
-Il divario residuo rispetto a R (1.57× a p=100) è quindi interno al ciclo coordinate-descent e non è
-recuperabile lato Python.
+Il divario residuo rispetto a R (1.57× a p=100, misura **pre**-riga-major: oggi 1.52×, vedi §7.4) è quindi
+interno al ciclo coordinate-descent e non è recuperabile lato Python.
 
 Esperimenti di build sulla stessa sorgente: passare S da colonna-major a riga-major (stesso elemento
 acceduto, stesso ordine di sommatoria) e compilare a `-O3` restituisce risultati **bit-identici** su 7
 input (i 4 golden CLR, il CLR p=100, un caso `plain` e uno `illcond`) e recupera ≈ 6 % (23.24 s → 22.00 s
 con riga-major a `-O2`, → 21.82 s con `-O3`). La copia C→F imposta dal binding costa 5.2 µs per chiamata
-(0.109 ms in tutto), quindi è irrilevante: il guadagno è nell'accesso non strided. Queste due modifiche
-**non sono state adottate** nella build attuale: la decisione è per la FASE 4. Dettagli e tabelle in
-`docs/PERFORMANCE.md`.
+(0.109 ms in tutto), quindi è irrilevante: il guadagno è nell'accesso non strided.
+
+**Esito (aggiornato il 2026-10-14).** Il **layout riga-major è stato adottato** (commit `e73ec82`,
+2026-10-13): il gate di bit-identità è stato rieseguito su **248 problemi** (244 dello sweep + i 4
+golden) contro la build precedente, tutti bit-identici, e la suite lenta è stata rieseguita per intero
+(`50 passed, 84 deselected in 1445.48 s`). Effetto misurato sugli stessi tre casi benchmark
+(mediana di 3, seriale): 0.572 → 0.514 s (p=30), 3.991 → 3.691 s (p=50), 22.056 → 21.348 s (p=100).
+**`-O3` non è stato adottato**: 0–1.2 %, dentro il rumore fra esecuzioni (mediana 21.696 s con `-O2`
+contro 21.670 s con `-O3`), e allargherebbe la distanza dai flag di build di R; resta disponibile come
+modifica di una riga. Dettagli e tabelle: `docs/PERFORMANCE.md`.
 
 ### 7.4 Effetto sui risultati già verificati
+
+**Condizioni di misura:** 2026-10-13, Linux x86-64 (GCC), macchina di sviluppo, estensione compilata,
+un solo thread (`n_jobs=1`) su entrambi i lati.
 
 Sui benchmark e sulle suite i risultati **non cambiano**: λ selezionato e numero di lati identici tra
 riferimento e C++ in tutti i casi misurati (e identici a R), suite non-slow da 662 s a 18.66 s. I tre
 casi p=100 verificati per intero (§5) non mostrano alcuna divergenza e passano ora in **129.23 s**
 complessivi (29.80 / 81.84 / 17.51 s) contro **8726.93 s** del riferimento, cioè **67.5×**, con
 `final_edges = 0` e 0 lati diversi nel path solver per-subcampione. Numeri e flag: `docs/PERFORMANCE.md`.
+
+**Nota sulle cifre ricorrenti per p=100.** Il rapporto con R compare nel repository come **1.57×**
+(tabella FASE 2 di `docs/PERFORMANCE.md`, misura del 2026-10-13 **prima** della modifica di layout,
+22.056 s), **1.52×** (dopo l'adozione del layout riga-major, 21.348 s) e **1.54×** (riga `n_jobs=1`
+della misura FASE 3, 21.619 s). Sono tre esecuzioni diverse dello stesso caso sulla stessa macchina,
+non un disaccordo: il valore da citare dipende da quale build è in uso. Il confronto **seriale-contro-seriale**
+resta comunque non omogeneo, perché `huge` è compilato con OpenMP (§7.1 punto 1).
 
 **Effetto collaterale noto e preesistente.** `tests/test_r_variability_expanded_scenarios.py::test_stochastic_variability_baseline_expanded_scenarios`
 fallisce. Non è causato dall'estensione: rieseguito con il **solo riferimento Python**

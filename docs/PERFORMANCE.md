@@ -35,6 +35,14 @@ injected R subsample indices as the FASE 1 baseline:
 Ratio < 1 means Python is faster than R. Versus the FASE 1 baseline the gap to R
 goes from 46.6× / 100.8× / 111.8× slower to 0.27× / 0.90× / 1.57×.
 
+*Measured 2026-10-13, Linux x86-64 (GCC), single thread on both sides, **before** the
+row-major change.* Three later runs of the same cases exist and give different ratios,
+which is why the repository quotes 1.57×, 1.52× and 1.54× for `p = 100`: after adopting
+the row-major layout the serial pipeline is 0.514 / 3.691 / **21.348** s (ratios 0.24× /
+0.83× / **1.52×**), and the `n_jobs = 1` row of the FASE 3 (a) table below is **21.619** s
+(**1.54×**). They are three runs of the same case on the same machine, not a
+disagreement — always quote the ratio together with the build it belongs to.
+
 **The measured outputs are unchanged.** For all three cases the selected lambda
 and the edge count are bit-for-bit identical between the reference and the C++
 solver, and identical to R:
@@ -230,7 +238,8 @@ subsample costs are heterogeneous, so a larger pool smooths the tail — but it 
 over-subscription and is deliberately not a default.
 
 **End-to-end versus R** (R runs `spiec.easi`+pulsar and its `huge` is
-OpenMP-parallel internally; ours uses threads):
+OpenMP-parallel internally; ours uses threads). Measured 2026-10-13, Linux x86-64,
+4 physical / 8 logical cores, median of 3 runs:
 
 | case | R | ours n_jobs=1 | ours n_jobs=4 | ours n_jobs=8 |
 |------|---|---|---|---|
