@@ -53,10 +53,17 @@ inline double threshold_l1(double x, double thr) {
     return 0.0;
 }
 
-// huge_core.cpp:23 — column-major accessor for a raw const pointer.
-inline double cm(const double* data, int nrows, int r, int c) {
-    return data[static_cast<std::size_t>(c) * static_cast<std::size_t>(nrows) +
-                static_cast<std::size_t>(r)];
+// huge_core.cpp:23 — element accessor for a raw const pointer.
+//
+// huge stores S column-major and the inner loops read a *row* of S
+// (`S[j, a_k]` for consecutive a_k), i.e. stride d in that layout.  We keep the
+// same element and the same summation order (the k loop still runs
+// 0..size_a-1) but store S row-major, so that same row access is contiguous
+// instead of strided.  S is square, so nrows == ncols == d and one dimension is
+// enough.
+inline double cm(const double* data, int d, int r, int c) {
+    return data[static_cast<std::size_t>(r) * static_cast<std::size_t>(d) +
+                static_cast<std::size_t>(c)];
 }
 
 // huge_core.cpp:640 — residual gradient of coordinate j for the m-th nodewise
@@ -96,7 +103,7 @@ void mb_refine_active(const double* S_data, int d, int m, double ilambda,
 // huge_core.cpp:679 — MB graph estimation over the whole lambda path,
 // warm-started from one lambda to the next.
 py::tuple solve_mb_path(
-    py::array_t<double, py::array::f_style | py::array::forcecast> S_in,
+    py::array_t<double, py::array::c_style | py::array::forcecast> S_in,
     py::array_t<double, py::array::c_style | py::array::forcecast> lambda_in,
     double thol, int max_iter) {
     if (S_in.ndim() != 2) throw std::invalid_argument("S must be a 2-D array.");
@@ -236,7 +243,8 @@ PYBIND11_MODULE(_mb_core, m) {
     m.def("solve_mb_path", &solve_mb_path, py::arg("S"), py::arg("lambda_path"),
           py::arg("thol") = 1e-4, py::arg("max_iter") = 10000,
           "Warm-started MB nodewise Lasso over the whole lambda path.\n\n"
-          "S must be the d x d correlation matrix (Fortran order is used\n"
-          "internally, as in huge). Returns (coefficients, hit_max_iter) where\n"
-          "coefficients has shape (n_lambda, d, d) with [i, node, predictor].");
+          "S must be the d x d correlation matrix (C order; it is read with\n"
+          "the same element order as huge, whose buffer is column-major).\n"
+          "Returns (coefficients, hit_max_iter) where coefficients has shape\n"
+          "(n_lambda, d, d) with [i, node, predictor].");
 }
