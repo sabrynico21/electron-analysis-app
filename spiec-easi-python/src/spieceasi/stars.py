@@ -163,7 +163,7 @@ def stars_select(
     tol: float = 1e-4,
     random_state: int = 0,
     n_jobs: int = -1,
-    prefer: str = "processes",
+    prefer: str = "threads",
     on_alpha_done: Callable[[int, int, float, float], None] | None = None,
     subsamples: Sequence[np.ndarray] | None = None,
 ) -> StARSResult:
@@ -178,10 +178,12 @@ def stars_select(
     ``subsamples`` is provided, those 0-based index arrays are used directly and
     random subsampling is bypassed.
 
-    ``prefer`` selects the joblib backend used to run the independent subsamples
-    (``"processes"`` by default, preserving historical behaviour). Frozen
-    executables (PyInstaller) must use ``"threads"``: a process pool would
-    re-execute the frozen binary, which is not a valid CLI entry point.
+    ``prefer`` selects the joblib backend used to run the independent subsamples.
+    The default is ``"threads"``: the compiled MB core releases the GIL, the
+    subsamples are aggregated in a fixed order, and a thread pool cannot
+    re-execute the interpreter — a *process* pool (``"processes"``, the legacy
+    behaviour) breaks frozen executables, where loky relaunches the binary with
+    its own bootstrap arguments. Results are bit-identical either way.
     """
     _require_huge_scale(standardize, "standardized")
     n_samples = X.shape[0]

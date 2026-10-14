@@ -595,14 +595,19 @@ def _compute_spieceasi_for_matrix(
     _raw_frac = params.get('spieceasiSubsampleFraction')
     subsample_fraction = float(_raw_frac) if _raw_frac else None
     max_iter = int(params.get('spieceasiMaxIter', 10_000) or 10_000)
-    # Frozen (PyInstaller) builds must never spawn a *process* pool: joblib's
-    # loky backend re-executes sys.executable, which for a frozen binary is this
-    # very CLI, so the child dies with "unknown command: -B". Threads are always
-    # safe. The StARS subsamples are independent and aggregated in a fixed
-    # order, so the result is bit-identical for any n_jobs/backend.
-    frozen = bool(getattr(sys, 'frozen', False))
-    prefer = 'threads' if frozen else 'processes'
-    default_jobs = 1 if frozen else min(4, os.cpu_count() or 1)
+    # Threads, never processes: joblib's loky (process) backend re-executes
+    # sys.executable with its own bootstrap arguments, which for a PyInstaller
+    # binary is this very CLI ("unknown command: -B"). The StARS subsamples are
+    # independent and aggregated in a fixed order, and the compiled MB core
+    # releases the GIL, so threads give real parallelism and bit-identical
+    # results for any worker count. The default worker count comes from the
+    # *physical* cores (over-subscription is worse than under-use) and
+    # `spieceasiJobs` overrides it.
+    from spieceasi.runtime import default_n_jobs, physical_core_count
+
+    prefer = 'threads'
+    physical_cores = physical_core_count()
+    default_jobs = default_n_jobs()
     n_jobs = int(params.get('spieceasiJobs', default_jobs) or 1)
     n_jobs = max(1, n_jobs)
 
@@ -631,7 +636,8 @@ def _compute_spieceasi_for_matrix(
     )
     log(
         "  SPIEC-EASI settings: "
-        f"n_jobs={n_jobs}, parallel_backend={prefer}, max_iter={max_iter}, "
+        f"n_jobs={n_jobs}, parallel_backend={prefer}, "
+        f"physical_cores={physical_cores}, max_iter={max_iter}, "
         f"lambda_min_ratio={lambda_min_ratio}, stars_threshold={stars_threshold}"
     )
 

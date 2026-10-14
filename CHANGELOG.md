@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Default joblib backend for StARS: `threads` (was `processes`).** The compiled
+  MB core releases the GIL and the subsamples are aggregated in a fixed order, so
+  a thread pool is both safe and faster (2.2×–3.2× at 4–8 workers on the
+  benchmark cases). Results are bit-identical for any worker count; `prefer`
+  still accepts `"processes"` for callers that need it. This also removes the
+  failure mode that broke frozen executables (loky re-executing the binary).
+- **Default worker count now comes from the physical cores**, not from
+  `min(4, cpu_count)`: `spieceasi.runtime.default_n_jobs()` reads the physical
+  core count where the platform exposes it, falls back to `logical // 2`
+  (assume SMT) and then to 1. The desktop app uses it; `spieceasiJobs` (or
+  `n_jobs`) overrides it. On the development machine (4 physical / 8 logical) the
+  p=100 pipeline goes from 21.6 s serial to 8.7 s at 4 workers.
 - **Build backend.** `hatchling` → `setuptools` + `pybind11`, so the compiled MB
   core can be built. `[tool.cibuildwheel]` builds wheels for CPython 3.10–3.14 on
   Linux, macOS and Windows; its `test-command` fails if the compiled core is
@@ -53,6 +65,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `spieceasi.stars.infer_subsample_size`: public helper that resolves the StARS
   subsample size with the `pulsar::.ratcheck` rule, now used internally and
   covered by tests.
+- `spieceasi.runtime`: `physical_core_count()` and `default_n_jobs()`, used by the
+  desktop app for the SPIEC-EASI worker count.
+- Golden fixtures are content-addressed: `golden_extended/CHECKSUMS.sha256`
+  records the SHA-256 of the *decompressed* content of every fixture, and
+  `solver_adj_path.tsv` is stored gzipped (44 MB → 2.0 MB, 22.2×). The data is
+  byte-identical — the tests load `.gz` transparently and `tests/test_golden_checksums.py`
+  fails if any content changes.
 - Extended R/Python equivalence golden set (`tests/golden_extended/`, 23 cases)
   with `tests/test_equivalence_extended.py`.
 - `docs/PERFORMANCE.md` with measured MB-solver timings and known performance

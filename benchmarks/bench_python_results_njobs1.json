@@ -1,0 +1,54 @@
+{
+  "kind": "python",
+  "environment": {
+    "platform": "Linux-6.18.53-1-lts-x86_64-with-glibc2.44",
+    "machine": "x86_64",
+    "cpu_model": "AMD Ryzen 5 3550H with Radeon Vega Mobile Gfx",
+    "cpu_count": 8,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "blas": "scipy-openblas"
+  },
+  "n_jobs": 1,
+  "cases": {
+    "ds2_p30_n100": {
+      "min": 0.51041946100122,
+      "median": 0.5164841410005465,
+      "times": [
+        0.5164841410005465,
+        0.51041946100122,
+        0.5166783389995544
+      ],
+      "selected_lambda": 0.2970674324372107,
+      "edge_count": 0,
+      "n_samples": 100,
+      "n_taxa": 30
+    },
+    "rand_p50_n50_s211": {
+      "min": 3.7717008809995605,
+      "median": 3.804392742998971,
+      "times": [
+        3.902455880999696,
+        3.804392742998971,
+        3.7717008809995605
+      ],
+      "selected_lambda": 0.36303491242767966,
+      "edge_count": 9,
+      "n_samples": 50,
+      "n_taxa": 50
+    },
+    "largep_p100_n80_s215": {
+      "min": 21.563295805999587,
+      "median": 21.618791506998605,
+      "times": [
+        21.563295805999587,
+        21.64172416600013,
+        21.618791506998605
+      ],
+      "selected_lambda": 0.3358268694886568,
+      "edge_count": 22,
+      "n_samples": 80,
+      "n_taxa": 100
+    }
+  }
+}

@@ -75,7 +75,10 @@ correlation computation wrapped with timers:
 So the gap to R at p = 100 (1.57×) is **entirely inside the coordinate-descent
 loop**. It is not Python overhead, not adjacency conversion, not StARS
 aggregation and not array copies: those together are 0.1 % of the runtime, i.e.
-they cannot be optimised into anything measurable.
+they cannot be optimised into anything measurable. Inside the loop the work is
+identical to R's (see the loop counters below) and the difference in wall time is
+R's OpenMP parallelism (see "the R comparison is not single-thread vs
+single-thread" below).
 
 ### Memory layout and `-O3` (measured)
 
@@ -120,6 +123,29 @@ p = 100 pipeline (3 runs each): shipped `-O2` min 21.560 s / median 21.696 s,
 it would widen the deviation from R's build flags. The identity gate passes
 (248/248, max |diff| = 0.0), so it stays available as a one-line change if a
 future build wants it.
+
+**At very large `p` the row-major gain grows (information only, no code change).**
+The `huge` source carries an explicit warning about this access pattern:
+
+> *“NOTE: S(j, idx_a[k]) reads look stride-d, but with j advancing in the caller's
+> outer loop each fixed k walks its column sequentially — size_a parallel
+> prefetch streams. Rewriting to stay within column j (using symmetry) measured
+> 2x SLOWER at d=2000; do not "fix" this access pattern.”*
+
+That note is about a different rewrite (keeping the access inside column `j` by
+using the symmetry of S); our change keeps the same element and the same
+summation order and only changes the storage layout. Re-measured anyway, one run
+each, both builds bit-identical, single-threaded:
+
+| case | column-major | row-major | row/col | bit-identical |
+|------|--------------|-----------|---------|---------------|
+| p=300, n=100 | 12.697 s | **10.970 s** | 0.864 | yes |
+| p=500, n=100 | 40.903 s | **30.064 s** | 0.735 | yes |
+
+So at p = 300 and p = 500 the row-major layout is 1.16× and 1.36× faster,
+i.e. the advantage *increases* with `d` on our code path — the opposite of the
+effect the comment warns about. These cases are outside the verified range (the
+goldens and the sweep stop at p = 100) and are reported as information only.
 
 ### The R comparison is not single-thread vs single-thread: `huge` uses OpenMP
 
@@ -173,7 +199,57 @@ Every counter matches exactly: the compiled core performs **the same work** as
 divergence point to report in the loop structure; the remaining difference in
 wall time is threads (`-O3`/layout aside).
 
+### FASE 3 (a) — thread-parallel subsamples
+
+The StARS subsamples are independent and the compiled core releases the GIL, so
+the default joblib backend is now **`threads`** (was `processes`; the legacy
+backend is still available). A thread pool cannot re-execute the interpreter,
+which is what broke the frozen build with the *loky* backend.
+
+**Determinism.** Results are **bit-identical** for `n_jobs = 1, 2, 4, 8`:
+adjacency, weights, directed coefficients, instability, monotone instability,
+alpha path and the selected lambda all compare equal with `np.array_equal`. The
+subsample adjacency paths are stacked in submission order and summed in that
+order, and no global mutable state is involved (each subsample owns its scratch).
+Covered by `tests/test_n_jobs_determinism.py`; the benchmark payloads (edge count
+and selected lambda) are also identical for every worker count tested (1…16).
+
+**Speed-up** (median of 3, same cases as above; "×" is versus `n_jobs = 1`):
+
+| n_jobs | ds2 p=30 | × | rand p=50 | × | largep p=100 | × |
+|--------|----------|---|-----------|---|--------------|---|
+| 1 | 0.516 s | 1.00× | 3.804 s | 1.00× | 21.619 s | 1.00× |
+| 2 | 0.291 s | 1.77× | 2.202 s | 1.73× | 13.055 s | 1.66× |
+| 4 | 0.239 s | 2.16× | 1.497 s | 2.54× | **8.734 s** | **2.48×** |
+| 8 | 0.196 s | 2.63× | 1.250 s | 3.04× | 6.861 s | 3.15× |
+| 16 | 0.204 s | 2.53× | 1.149 s | 3.31× | 6.505 s | 3.32× |
+
+Machine: 4 physical cores / 8 logical (SMT). `n_jobs = 8` (logical count) still
+beats 4; `n_jobs = 16` (twice the logical count) is *not* harmful here — the
+subsample costs are heterogeneous, so a larger pool smooths the tail — but it is
+over-subscription and is deliberately not a default.
+
+**End-to-end versus R** (R runs `spiec.easi`+pulsar and its `huge` is
+OpenMP-parallel internally; ours uses threads):
+
+| case | R | ours n_jobs=1 | ours n_jobs=4 | ours n_jobs=8 |
+|------|---|---|---|---|
+| p=30 | 2.108 s | 0.516 s (0.24×) | 0.239 s (0.11×) | 0.196 s (0.09×) |
+| p=50 | 4.450 s | 3.804 s (0.85×) | 1.497 s (0.34×) | 1.250 s (0.28×) |
+| p=100 | 14.040 s | 21.619 s (1.54×) | **8.734 s (0.62×)** | **6.861 s (0.49×)** |
+
+So the serial-to-serial comparison was 1.54× slower than R at p=100; with threads
+we are 1.6× faster at `n_jobs = 4` and 2.05× faster at `n_jobs = 8`. The
+requested p=100, n=80 measurement with `n_jobs = 4` is **8.734 s**.
+
+**Default worker count.** `spieceasi.runtime.default_n_jobs()`: physical cores
+when detectable (Linux `/proc/cpuinfo`, macOS `sysctl hw.physicalcpu`, Windows
+`wmic`/PowerShell CIM, or `psutil` if present); otherwise `logical // 2`
+(assume SMT, stay on the safe side); otherwise 1. The desktop app uses it and
+`spieceasiJobs` overrides it.
+
 ### What was measured, and what was not
+
 
 
 

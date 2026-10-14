@@ -70,17 +70,31 @@ def _check(step: str, ok: bool, detail: str) -> None:
         raise FirstDivergenceError(f"[{step}] {detail}")
 
 
+def _resolve_golden(path: Path) -> Path:
+    """Return ``path``, or its ``.gz`` companion when only that exists.
+
+    The large golden matrices (``solver_adj_path.tsv``) are stored gzipped to
+    keep the fixture tree manageable; ``numpy.loadtxt`` decompresses a ``.gz``
+    path transparently.  The decompressed bytes are identical to the original
+    files, see ``golden_extended/CHECKSUMS.sha256``.
+    """
+    if path.is_file():
+        return path
+    compressed = path.with_name(path.name + ".gz")
+    return compressed if compressed.is_file() else path
+
+
 def _load_matrix(path: Path) -> np.ndarray:
-    arr = np.loadtxt(path, delimiter="\t")
+    arr = np.loadtxt(_resolve_golden(path), delimiter="\t")
     return np.atleast_2d(arr)
 
 
 def _load_vector(path: Path) -> np.ndarray:
-    return np.atleast_1d(np.loadtxt(path, delimiter="\t"))
+    return np.atleast_1d(np.loadtxt(_resolve_golden(path), delimiter="\t"))
 
 
 def _load_scalar(path: Path) -> float:
-    return float(np.loadtxt(path))
+    return float(np.loadtxt(_resolve_golden(path)))
 
 
 def _load_params(path: Path) -> dict[str, str]:
