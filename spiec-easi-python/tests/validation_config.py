@@ -84,6 +84,17 @@ MIN_STOCHASTIC_BASELINE_SCENARIOS = 3
 MIN_STOCHASTIC_BASELINE_SEEDS = 4
 
 
+# Fase 4/5 expanded scenarios: the cross-implementation comparison is only
+# informative if the StARS selection is not sitting at lambda = lambda.max for
+# every curve (there the model is empty in Python and its single edge is the
+# numerically indeterminate one, see docs/AUDIT.md 2.E).  At least this many
+# (scene, seed) curves must select an *interior* lambda, otherwise the
+# stochastic-baseline test fails with an explicit message instead of silently
+# comparing empty models.  Declared a priori; the three high-signal scenes added
+# to the scenario list are required to select an interior lambda at every seed.
+MIN_INTERIOR_LAMBDA_SELECTIONS = 3
+
+
 # Fase 5 (expanded synthetic benchmark) minimum topology coverage.
 MIN_EXPANDED_SCENARIO_FAMILIES = 3
 MIN_EXPANDED_SCENARIOS = 6
