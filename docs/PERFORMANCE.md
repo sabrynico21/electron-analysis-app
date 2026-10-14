@@ -104,11 +104,78 @@ against the shipped build on 7 inputs (`ds1..ds4` CLR, the `p = 100` CLR, one
   row-major build helps through the access pattern, not through the copy.
 
 Combined, the two switch-level changes recover ≈ 6 % of the p = 100 runtime
-while remaining bit-identical. They are **not** applied to the shipped build yet;
-adopting them is a decision for FASE 4. The remaining ≈ 1.5× gap needs
-structural work (see below), not build flags.
+while remaining bit-identical.
+
+**What was adopted.** The **row-major layout is adopted** (commit `e73ec82`):
+same element access and same summation order, bit-identity verified on all 248
+problems (244 sweep + 4 goldens) against the pre-change build, and the full slow
+suite re-run afterwards: `50 passed, 84 deselected in 1445.48 s`. Measured on the
+three benchmark cases (median of 3, serial): 0.572 → 0.514 s (p=30), 3.991 →
+3.691 s (p=50), 22.056 → 21.348 s (p=100), i.e. the ratio to R becomes
+0.24× / 0.83× / 1.52×.
+
+**`-O3` is not adopted.** Rebuilt from the final source and compared on the
+p = 100 pipeline (3 runs each): shipped `-O2` min 21.560 s / median 21.696 s,
+`-O3` min 21.303 s / median 21.670 s — 0–1.2 %, inside run-to-run noise, while
+it would widen the deviation from R's build flags. The identity gate passes
+(248/248, max |diff| = 0.0), so it stays available as a one-line change if a
+future build wants it.
+
+### The R comparison is not single-thread vs single-thread: `huge` uses OpenMP
+
+The installed `huge` 2.0.1 is compiled **with OpenMP** (`libs/huge.so` links
+`libgomp`, `src/Makevars.in` sets `OPENMP_CXXFLAGS`), and its `mb()` parallelises
+the `d` nodewise regressions:
+
+```
+#pragma omp parallel
+#pragma omp for schedule(dynamic)
+for (int m = 0; m < d; m++) { ... }
+```
+
+Our core is deliberately single-threaded (no OpenMP over `m`), so the end-to-end
+ratios versus R are not like-for-like. Isolating the solver: the same correlation
+matrix S and the same lambda path, handed to huge's own C++ `mb` through
+`.Call("_huge_SPMBgraph", S, lambda, nlambda, d)` (so R's `cor` is not involved),
+against our core on the same input:
+
+| case | R `huge::mb`, 1 thread | R `huge::mb`, default (8 threads) | our core, 1 thread |
+|------|------------------------|-----------------------------------|--------------------|
+| p=30 | 0.0274 s | **0.0176 s** (1.56×) | 0.0340 s |
+| p=50 | 0.3771 s | **0.1755 s** (2.15×) | 0.3579 s |
+| p=100 | 1.8621 s | **0.8732 s** (2.13×) | 1.6639 s |
+
+Single-threaded, our core is therefore **on par with R's** (slightly faster at
+p=50/p=100, 1.24× slower at p=30, single runs). The residual gap at p=100
+(1.52×) is explained by R's OpenMP factor (~2.1× on the `mb` call), not by a
+different amount of work — see the counters below.
+
+### Is the work the same? Loop counters, R vs C++
+
+Both sources were rebuilt with identical counters (they only observe the loops;
+the instrumented `huge` returns results bit-identical to the official build,
+verified on p=30). Counted on the same S and the same path, single-threaded:
+
+| counter | p=30 R / ours | p=50 R / ours | p=100 R / ours |
+|---------|---------------|---------------|----------------|
+| active-set sweeps | 31099 / **31099** | 169646 / **169646** | 284007 / **284007** |
+| coordinate updates | 862432 / **862432** | 7636682 / **7636682** | 21656514 / **21656514** |
+| residual evaluations | 8457 / **8457** | 40575 / **40575** | 213966 / **213966** |
+| residual terms (`sum size_a`) | 83287 / **83287** | 844344 / **844344** | 9138629 / **9138629** |
+| outer (strong-rule) iterations | 692 / **692** | 1399 / **1399** | 2283 / **2283** |
+| strong-rule rounds | 1031 / **1031** | 2651 / **2651** | 5387 / **5387** |
+| certification passes | 692 / **692** | 1399 / **1399** | 2283 / **2283** |
+| certification violations | 146 / **146** | 590 / **590** | 422 / **422** |
+| lambda iterations | 600 / **600** | 1000 / **1000** | 2000 / **2000** |
+
+Every counter matches exactly: the compiled core performs **the same work** as
+`huge` on the same input. There is no "extra sweep" and therefore no first
+divergence point to report in the loop structure; the remaining difference in
+wall time is threads (`-O3`/layout aside).
 
 ### What was measured, and what was not
+
+
 
 
 
@@ -253,10 +320,13 @@ Known, still-open items:
    the frozen app, `processes` from source). A deterministic aggregation with
    bit-identical results for `n_jobs = 1` and `n_jobs > 1` is FASE 3 work and is
    not implemented yet.
-2. **OpenMP over neighbourhoods.** The compiled core deliberately does not
-   parallelise over the `m = 0…d-1` regressions (no OpenMP), to keep the
-   accumulation order deterministic. This is the main remaining single-thread
-   headroom at `p = 100`.
+2. **OpenMP over neighbourhoods.** The compiled core does not parallelise over
+   the `m = 0…d-1` regressions. The `d` nodewise problems are independent, so
+   there is no accumulation across `m` to reorder and parallelising them would
+   not change any bit of the output (only the deterministic aggregation of
+   `hit_max_iter` needs care). This is the headroom that `huge` already uses
+   (measured 2.13× at p=100 over the single-threaded `mb` call) and the natural
+   first item for FASE 3/4.
 3. **`collect_sorted` / sequential strong rule.** `huge` collects and sorts the
    active-set candidates; the translation follows the simpler variable-order
    scan. Same fixed point, different order — it is a declared deviation, not a

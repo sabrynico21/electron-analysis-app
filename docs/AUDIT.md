@@ -262,8 +262,13 @@ con `S` passata in ordine Fortran e **GIL rilasciato** attorno al nucleo numeric
 
 ### 7.1 Deviazioni dichiarate dell'estensione
 
-1. **Nessun OpenMP** sulle `m = 0…d−1` regressioni: la parallelizzazione cambierebbe l'ordine di
-   accumulazione dei risultati per riga; tenuta la versione a thread singolo e deterministica.
+1. **Nessun OpenMP** sulle `m = 0…d−1` regressioni. Attenzione: il pacchetto `huge` 2.0.1 **installato è
+   compilato con OpenMP** (`libs/huge.so` linka `libgomp`, `Makevars.in` usa `OPENMP_CXXFLAGS`, e `mb()`
+   esegue il ciclo sui nodi sotto `#pragma omp parallel` + `#pragma omp for schedule(dynamic)`): il
+   confronto di wall time con R **non è seriale-contro-seriale** e va letto tenendo conto di questo fattore
+   (misurato: 1.56× a p=30 e 2.13× a p=100 sulla sola chiamata `mb`). La nostra traduzione non
+   parallelizza: i `d` problemi nodewise sono indipendenti, quindi parallelizzare non cambierebbe alcuna
+   accumulazione bit a bit, ma i tempi misurati e i contatori sono in `docs/PERFORMANCE.md`.
 2. **Nessun `collect_sorted`.** `huge` raccoglie e ordina i candidati dell'active set; la traduzione
    segue la scansione in ordine di variabile. Il punto fisso (KKT, supporto, coefficienti) è lo stesso,
    l'ordine di visita no: è la ragione principale per cui i risultati non sono bit-identici a R.
