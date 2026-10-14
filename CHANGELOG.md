@@ -67,11 +67,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   covered by tests.
 - `spieceasi.runtime`: `physical_core_count()` and `default_n_jobs()`, used by the
   desktop app for the SPIEC-EASI worker count.
-- Golden fixtures are content-addressed: `golden_extended/CHECKSUMS.sha256`
-  records the SHA-256 of the *decompressed* content of every fixture, and
-  `solver_adj_path.tsv` is stored gzipped (44 MB → 2.0 MB, 22.2×). The data is
-  byte-identical — the tests load `.gz` transparently and `tests/test_golden_checksums.py`
-  fails if any content changes.
+- **Golden fixtures are content-addressed:** `golden_extended/CHECKSUMS.sha256`
+  records the SHA-256 of the *decompressed* content of every fixture, and the
+  large matrices (`solver_adj_path.tsv`, `solver_coef_path.tsv`) are stored
+  gzipped: 56 MB → 2.0 MB and 12.1 MB → 5.0 MB respectively, i.e. the tree goes
+  from **57 MB to 11 MB**. The data is byte-identical — the tests load `.gz`
+  transparently and `tests/test_golden_checksums.py` fails if any content changes.
+- **CI (`.github/workflows/ci.yml`):** a job builds the extension and runs the
+  extension-vs-reference sweep and the `n_jobs` determinism tests plus the fast
+  suite; a second job removes the compiled module and exercises the pure-Python
+  fallback; a cibuildwheel job builds wheels on Linux, macOS Intel, macOS arm64
+  and Windows; a fourth builds the frozen backend with PyInstaller and runs the
+  frozen regression tests.
 - Extended R/Python equivalence golden set (`tests/golden_extended/`, 23 cases)
   with `tests/test_equivalence_extended.py`.
 - `docs/PERFORMANCE.md` with measured MB-solver timings and known performance
@@ -79,6 +86,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Start-up of the frozen backend: ≈9.2 s of the ≈10 s removed.** About 7.7 s
+  was the pure-Python solver (now the compiled core) and 0.94 s was an eager
+  `from scipy.stats import spearmanr` on a path that never uses it — the import
+  moved into the helper that needs it (`frozen analyze` on the tiny benchmark:
+  10.740 s → 1.504 s). The frozen bundle also packages the compiled core
+  explicitly (`backend.spec` hiddenimports) and a new regression test asserts the
+  packaged app logs `SPIEC-EASI solver: cpp`, i.e. it does not silently fall back
+  to the reference solver.
 - **The packaged (PyInstaller) backend crashed on every SPIEC-EASI run.**
   `stars_select` called `joblib.Parallel(n_jobs=…)` with the default *loky*
   (process) backend. Inside a frozen executable loky re-executes the binary with

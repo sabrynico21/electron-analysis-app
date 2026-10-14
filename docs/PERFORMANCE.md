@@ -381,6 +381,53 @@ test time is roughly twice the pipeline-only projection.
 `sub0_edge_diff = 0` for all three, i.e. the per-subsample solver output already
 matches R at p = 100.
 
+## Start-up time of the frozen backend (measured)
+
+`benchmarks/bench_startup.py`, tiny case p=5 n=20, warm median of 4–5 launches
+(no other load on the machine):
+
+| metric | FASE 1 (pure-Python solver) | + compiled core | + compiled core, lazy `scipy.stats` |
+|--------|------------------------------|-----------------|--------------------------------------|
+| frozen, startup only | 0.092 s | 0.108 s | **0.103 s** |
+| frozen, analyze tiny | 10.740 s | 2.444 s | **1.504 s** |
+| source, startup only | 0.018 s | 0.038 s | **0.037 s** |
+| source, analyze tiny | 5.476 s | 1.786 s | **1.734 s** |
+| frozen − source (analyze) | +5.264 s | +0.658 s | **−0.231 s** |
+
+**Where the ~10 s went.** About **7.7 s of it was the pure-Python solver**, not
+start-up: compiling the MB core brought `frozen analyze` from 10.740 s to 2.444 s.
+A further **0.94 s was the eager `from scipy.stats import spearmanr`** — measured
+at 0.835 s on its own — which the SPIEC-EASI path never uses; it is now imported
+inside the helper that needs it, so `frozen analyze` is 1.504 s in total. There
+is no longer any measurable PyInstaller penalty: the frozen run is *faster* than
+the source run (−0.23 s) because pandas, which `spieceasi.transforms` imports as
+an optional convenience, is correctly absent from the bundle while the source
+environment has it (0.225 s of the source import time).
+
+**Import profile of an analyze run** (`-X importtime`, source, µs cumulative):
+`spieceasi` 432 · `spieceasi.pipeline` 432 · `spieceasi.transforms` 226 (all of
+it pandas) · `networkx` 148 · `analysis` 121 · `numpy` 71 · `spieceasi.stars` 54
+(including joblib). `scipy.stats` is no longer on the path (it was 834).
+
+**one-file vs one-folder.** The shipped bundle is one *directory*
+(`EXE(exclude_binaries=True)` + `COLLECT`). A one-file build of the identical
+spec was measured on the same machine and tiny case:
+
+| layout | startup only | analyze tiny |
+|--------|--------------|--------------|
+| one-folder (shipped) | **0.094 s** | **1.499 s** |
+| one-file (58.5 MB single binary) | 0.783 s | 2.200 s |
+
+One-file pays **+0.69 s per launch** for unpacking itself into a temporary
+directory, i.e. +46 % on this job. One-folder stays.
+
+**What is still avoidable.** Only the residual import cost of `numpy` (71 ms),
+`networkx` (148 ms) and the `spieceasi` package (432 ms, of which 225 ms is
+pandas in the source environment only). Removing them would mean dropping
+functionality, so no further start-up work is planned. Overall: of the original
+≈10 s frozen launch-and-run, **≈9.2 s is gone** and ~1.5 s remains, of which
+0.10 s is the PyInstaller bootloader itself.
+
 ## Known limitations / future work
 
 State after FASE 2: the coordinate-descent solver is no longer the dominant cost
@@ -391,25 +438,21 @@ the total for small problems.
 
 Known, still-open items:
 
-1. **Parallelism over subsamples.** StARS solves `n_subsamples` independent
-   problems; with `n_jobs > 1` they currently go through joblib (`threads` in
-   the frozen app, `processes` from source). A deterministic aggregation with
-   bit-identical results for `n_jobs = 1` and `n_jobs > 1` is FASE 3 work and is
-   not implemented yet.
-2. **OpenMP over neighbourhoods.** The compiled core does not parallelise over
-   the `m = 0…d-1` regressions. The `d` nodewise problems are independent, so
-   there is no accumulation across `m` to reorder and parallelising them would
-   not change any bit of the output (only the deterministic aggregation of
-   `hit_max_iter` needs care). This is the headroom that `huge` already uses
-   (measured 2.13× at p=100 over the single-threaded `mb` call) and the natural
-   first item for FASE 3/4.
+1. **Parallelism over subsamples — done (FASE 3 a).** The default backend is now
+   `threads`, results are bit-identical for `n_jobs = 1…16`, and the p=100 case
+   goes from 21.6 s serial to 8.7 s at four workers; see "FASE 3 (a)" above.
+   A future option (not exposed) is to default to the *logical* core count on SMT
+   machines: measured 1.27× more at p=100 (6.86 s at 8 workers vs 8.73 s at 4).
+2. **OpenMP over neighbourhoods.** Not implemented — see the dedicated
+   "Future work: OpenMP" section below for the proposal, its bit-identity gates
+   and the per-platform packaging work it needs.
 3. **`collect_sorted` / sequential strong rule.** `huge` collects and sorts the
    active-set candidates; the translation follows the simpler variable-order
    scan. Same fixed point, different order — it is a declared deviation, not a
-   bug, but it is why results are not bit-identical to R.
-4. **Start-up time of the packaged app.** The frozen executable needs ≈ 5.3 s
-   more than the source run before any computation starts (10.740 s vs 5.476 s
-   for the tiny case); this is PyInstaller runtime overhead and is FASE 5 work.
+   bug, but it is why results are not bit-identical to R. The loop counters show
+   the *amount* of work is identical, so this does not cost time on our side.
+4. **Start-up time of the packaged app.** See the startup section below for the
+   measured breakdown and what was removed.
 
 Earlier hypothesis that is now obsolete: replacing BLAS with scalar loops was
 considered to remove the `lambda = lambda.max` indeterminacy. It is not needed —
@@ -419,3 +462,60 @@ at `lambda = lambda.max` the result is indeterminate in R as well (see
 Any further optimisation must keep the R parity results in
 `tests/test_equivalence.py`, `tests/test_equivalence_extended.py` and
 `tests/test_app_integration.py` unchanged.
+
+## Future work: OpenMP over neighbourhoods (proposal — not implemented)
+
+**Why.** `huge` parallelises the `d` nodewise regressions with
+`#pragma omp parallel` + `#pragma omp for schedule(dynamic)` and gets 1.56× (p=30)
+to 2.13× (p=100) on the `mb` call itself; the measured loop counters are
+*identical* to ours, so this is the only remaining source of the serial gap. The
+`d` problems are independent — no reduction crosses `m` — so the output should be
+bit-identical; the only shared state is `hit_max_iter` (a single bool) and the
+per-`m` scratch, which must become thread-local instead of per-`m`.
+
+**Bit-identity gates (explicit, not assumed).** All three must run 1 vs 2/4/8
+OpenMP threads and compare with `np.array_equal` (and against the pure-Python
+reference):
+
+1. the 244-problem sweep plus the ds1–ds4 goldens through the core;
+2. the end-to-end golden pipeline (ds1–ds4, configs `r` and `app`) and the p=100
+   case;
+3. the whole slow suite, run twice (`OMP=1` and `OMP=8`).
+
+The thread count is set programmatically (`spieceasi.openmp.set_threads(n)` /
+`openmp_threads()`, backed by `omp_set_num_threads` so it does not depend on
+environment variables), and a new slow test module drives the gates.
+
+**Packaging per platform.**
+
+| platform | OpenMP runtime | proposal |
+|----------|----------------|----------|
+| Linux (manylinux/musllinux) | `libgomp` (GCC) | link it **statically** (`-Wl,-Bstatic -lgomp -Wl,-Bdynamic`) so the wheel does not depend on the system copy; otherwise let `auditwheel` bundle it |
+| macOS Intel + arm64 | `libomp` (Apple clang has no `-fopenmp`) | explicit `-I/-L .../libomp -lomp` against the keg-only Homebrew install; arm64 wheel must be built on an arm64 runner (no cross-compiling); `delocate-wheel` copies `libomp.dylib` into the wheel |
+| Windows | MSVC `/openmp` → `vcomp140.dll` | bundle it with `delvewheel` (or ship it next to the app) |
+
+**Mandatory serial fallback.** `setup.py` compiles a probe with the OpenMP flag;
+if it fails, or if `SPIECEASI_NO_OPENMP=1`, the **same source** is built without
+OpenMP (`#ifdef _OPENMP` around the pragmas) and `openmp_threads()` returns 1. A
+CI job builds that variant and runs the extension-vs-reference tests, so the
+serial path is always exercised. For PyInstaller, the static-link option means
+nothing extra to collect; a dynamic runtime would need a hook
+(`collect_dynamic_libs("spieceasi")`) and is caught by the existing frozen test.
+
+**Anti-oversubscription rule.** `n_jobs × openmp_threads ≤ physical cores`, with
+the product clamped (and logged) if a user forces inconsistent values. Proposed
+default: the app exposes a single worker budget (`spieceasiJobs`, default =
+physical cores) and derives `n_jobs = P, threads = 1`; presets `(P,1)`, `(P/2,2)`,
+`(P/4,4)`, `(1,P)`, plus `spieceasiOpenmpThreads` for advanced use. The matrix to
+measure is **4×1, 2×2, 1×4** (all = 4 ≤ P) and **2×4, 4×4** (over-subscribed,
+expected to degrade), on p=100 and p=50, with `OMP=1, n_jobs=8` as today's
+reference point. R's own configuration is effectively **1×8** (pulsar serial,
+`huge` with 8 OpenMP threads).
+
+**Possible future option (not exposed).** On SMT machines the *logical* core
+count is a better worker budget for the thread-parallel subsamples alone:
+measured 1.27× more at p=100 (6.861 s with 8 workers vs 8.734 s with 4) on this
+4-physical/8-logical CPU. It is deliberately not a default because it
+over-subscribes the FP units and because with OpenMP enabled the product rule
+above starts from the physical count.
+

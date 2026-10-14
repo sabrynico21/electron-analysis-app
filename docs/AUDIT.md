@@ -265,10 +265,11 @@ con `S` passata in ordine Fortran e **GIL rilasciato** attorno al nucleo numeric
 1. **Nessun OpenMP** sulle `m = 0…d−1` regressioni. Attenzione: il pacchetto `huge` 2.0.1 **installato è
    compilato con OpenMP** (`libs/huge.so` linka `libgomp`, `Makevars.in` usa `OPENMP_CXXFLAGS`, e `mb()`
    esegue il ciclo sui nodi sotto `#pragma omp parallel` + `#pragma omp for schedule(dynamic)`): il
-   confronto di wall time con R **non è seriale-contro-seriale** e va letto tenendo conto di questo fattore
-   (misurato: 1.56× a p=30 e 2.13× a p=100 sulla sola chiamata `mb`). La nostra traduzione non
-   parallelizza: i `d` problemi nodewise sono indipendenti, quindi parallelizzare non cambierebbe alcuna
-   accumulazione bit a bit, ma i tempi misurati e i contatori sono in `docs/PERFORMANCE.md`.
+   confronto di wall time con R **non è seriale-contro-seriale** e va letto tenendo conto di questo
+   fattore (misurato: 1.56× a p=30 e 2.13× a p=100 sulla sola chiamata `mb`). La nostra traduzione non
+   parallelizza; l'ipotesi che farlo sia numerico-safe è supportata dai **contatori identici** (§7.6) ma
+   **non è stata implementata**: la proposta completa (gate di bit-identità 1 vs N thread, packaging
+   per piattaforma, regola anti-oversubscription) è in `docs/PERFORMANCE.md` come lavoro futuro.
 2. **Nessun `collect_sorted`.** `huge` raccoglie e ordina i candidati dell'active set; la traduzione
    segue la scansione in ordine di variabile. Il punto fisso (KKT, supporto, coefficienti) è lo stesso,
    l'ordine di visita no: è la ragione principale per cui i risultati non sono bit-identici a R.
@@ -282,7 +283,19 @@ con `S` passata in ordine Fortran e **GIL rilasciato** attorno al nucleo numeric
 5. **Fallback automatico.** Se `_mb_core` non è importabile, `mb_solver` usa
    `mb_solver_reference.py` (copia congelata del solver Python puro) ed emette un `RuntimeWarning`
    esplicito. Il riferimento Python resta quindi la sorgente di verità e la garanzia di funzionamento.
-6. **Nessuna affermazione di equivalenza generale.** Le verifiche sotto valgono **sui casi testati**.
+   Il backend dell'app logga `SPIEC-EASI solver: cpp|python` e, nel secondo caso, un `WARNING` che
+   spiega la caduta di prestazioni: il fallback non può passare inosservato.
+6. **Layout di S: riga-major invece di colonna-major.** `huge` memorizza S colonna-major e legge una
+   *riga* (`S[j, a_k]` con `a_k` consecutivi), cioè con stride `d`. La traduzione mantiene lo stesso
+   elemento e lo stesso ordine di sommatoria ma memorizza S riga-major, così quell'accesso è contiguo
+   (BIT-IDENTICO su tutti i 248 problemi del gate; +5.3 % a p=100, +16 % a p=300, +36 % a p=500).
+   NON è la riscrittura di cui avverte il sorgente di `huge` (quella resta dentro la colonna `j`
+   usando la simmetria ed era 2× più lenta per loro): vedi `docs/PERFORMANCE.md`.
+7. **Nessuna affermazione di equivalenza generale.** Le verifiche sotto valgono **sui casi testati**.
+
+L'esecuzione **multi-thread dei subcampioni StARS** (FASE 3 a) non è una deviazione numerica: le
+soluzioni sono bit-identiche per `n_jobs = 1…16` (aggregazione a ordine fisso, nessuno stato globale),
+quindi l'output non dipende dal numero di worker. È documentata come default in `CHANGELOG.md`.
 
 ### 7.2 Verifica estensione-vs-riferimento (244 problemi + golden)
 

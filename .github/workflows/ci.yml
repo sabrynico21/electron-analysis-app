@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extension:
+    name: compiled MB core + equivalence tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build dependencies
+        run: python -m pip install --upgrade pip setuptools wheel pybind11
+      - name: Build and install the package (compiles spieceasi._mb_core)
+        run: python -m pip install --no-build-isolation -e spiec-easi-python
+      - name: The compiled core must be present and selected
+        run: |
+          python - <<'PY'
+          import spieceasi.mb_solver as m
+          assert m.HAVE_CPP_SOLVER, "the compiled MB core was not built"
+          assert m.active_solver() == "cpp", m.active_solver()
+          print("solver:", m.active_solver())
+          PY
+      - name: n_jobs determinism (1 vs 2/4/8, threads and processes)
+        run: python -m pytest spiec-easi-python/tests/test_n_jobs_determinism.py -q
+      - name: Extension vs pure-Python reference (244-problem sweep + goldens)
+        run: python -m pytest spiec-easi-python/tests/test_mb_core_equivalence.py -m slow -q -s
+      - name: Fast suite
+        run: python -m pytest spiec-easi-python/tests -m "not slow" -q
+      - name: Golden fixture checksums
+        run: python -m pytest spiec-easi-python/tests/test_golden_checksums.py -q
+
+  reference-fallback:
+    name: pure-Python fallback (no compiled core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build dependencies
+        run: python -m pip install --upgrade pip setuptools wheel pybind11
+      - name: Install, then remove the compiled extension
+        run: |
+          python -m pip install --no-build-isolation -e spiec-easi-python
+          find spiec-easi-python/src -name "_mb_core*.so" -delete
+          python - <<'PY'
+          import spieceasi.mb_solver as m
+          assert not m.HAVE_CPP_SOLVER, "expected the fallback path"
+          assert m.active_solver() == "python"
+          print("fallback OK:", m.active_solver())
+          PY
+      - name: The solver must still work (and stay deterministic) without it
+        run: python -m pytest spiec-easi-python/tests/test_n_jobs_determinism.py -q
+
+  wheels:
+    name: wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest      # manylinux x86_64
+          - os: macos-13           # macOS Intel
+          - os: macos-14           # macOS arm64
+          - os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build wheels (cibuildwheel: cp310-cp314)
+        uses: pypa/cibuildwheel@v2.21
+        with:
+          package-dir: spiec-easi-python
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
+  frozen-backend:
+    name: frozen backend (PyInstaller)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build the frozen analysis backend
+        run: node scripts/build-backend.mjs
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pytest
+      - name: The frozen bundle must ship and use the compiled MB core
+        run: |
+          python -m pytest spiec-easi-python/tests/test_app_integration.py -m slow \
+            -q -k "frozen" -p no:cacheprovider

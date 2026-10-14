@@ -24,7 +24,6 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
-from scipy.stats import spearmanr
 
 # SPIEC-EASI lives in the standalone library (spiec-easi-python/src) so the app
 # and the library share a single source. When this script is run directly (in
@@ -189,6 +188,11 @@ def _load_metadata_conditions(
 
 
 def _compute_spearman(x_values: list, y_values: list) -> tuple[float, float]:
+    # Imported here rather than at module import: scipy.stats is heavy (about a
+    # second in the frozen bundle) and this helper is only reached by the
+    # Pearson/Spearman path, never by the SparCC or SPIEC-EASI runs.
+    from scipy.stats import spearmanr
+
     # Spearman is undefined for constant vectors and may emit warnings; treat as invalid pair.
     if len(x_values) < 3 or len(y_values) < 3:
         return math.nan, math.nan
@@ -603,6 +607,7 @@ def _compute_spieceasi_for_matrix(
     # results for any worker count. The default worker count comes from the
     # *physical* cores (over-subscription is worse than under-use) and
     # `spieceasiJobs` overrides it.
+    from spieceasi.mb_solver import HAVE_CPP_SOLVER, active_solver
     from spieceasi.runtime import default_n_jobs, physical_core_count
 
     prefer = 'threads'
@@ -610,6 +615,15 @@ def _compute_spieceasi_for_matrix(
     default_jobs = default_n_jobs()
     n_jobs = int(params.get('spieceasiJobs', default_jobs) or 1)
     n_jobs = max(1, n_jobs)
+    solver = active_solver()
+    log(f"  SPIEC-EASI solver: {solver} (compiled MB core)" if HAVE_CPP_SOLVER
+        else f"  SPIEC-EASI solver: {solver}")
+    if not HAVE_CPP_SOLVER:
+        log(
+            "  WARNING: the compiled MB core (spieceasi._mb_core) is not available "
+            "in this build; falling back to the pure-Python reference solver, "
+            "which is roughly two orders of magnitude slower."
+        )
 
     # With very few samples and hundreds of taxa, MB+StARS can require a huge
     # number of Lasso fits. Reduce defaults in that regime unless the user has

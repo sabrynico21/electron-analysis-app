@@ -344,3 +344,23 @@ def test_frozen_backend_runs_spieceasi_with_app_defaults(tmp_path: Path) -> None
     assert payload_default == payload_one
     assert payload_default["graph_pipeline"] == payload_one["graph_pipeline"]
     assert payload_default["summary"] == payload_one["summary"]
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not FROZEN_BACKEND.is_file(),
+    reason="frozen backend not built (run `npm run build:backend`)",
+)
+def test_frozen_backend_uses_the_compiled_mb_core(tmp_path: Path) -> None:
+    """The packaged app must ship *and use* the compiled MB core.
+
+    Without it the backend silently falls back to the pure-Python reference
+    solver, which is roughly two orders of magnitude slower; that would be a
+    silent performance regression in the shipped application.
+    """
+    rc, log, _payload = _run_backend(
+        [str(FROZEN_BACKEND)], _tiny_params("frozen-solver"), tmp_path, "solver"
+    )
+    assert rc == 0, log
+    assert "SPIEC-EASI solver: cpp" in log, log
+    assert "compiled MB core (spieceasi._mb_core) is not available" not in log, log

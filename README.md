@@ -213,7 +213,13 @@ Current integration defaults for SPIEC-EASI MB:
 - `spieceasiNSubsamples`: `20`
 - `spieceasiStarsThreshold`: `0.05`
 - `spieceasiMaxIter`: `10000`
-- `spieceasiJobs`: `min(4, cpu_count)` (at least `1`)
+- `spieceasiJobs`: unset by default. When unset the worker count is the number of
+  **physical** CPU cores (`spieceasi.runtime.default_n_jobs()`; `logical // 2` if
+  the physical count cannot be read, `1` if nothing can be read). Set it to force
+  a value.
+- Parallel backend: **threads** (joblib). The compiled MB core releases the GIL,
+  the subsample results are aggregated in a fixed order, and results are
+  bit-identical for any worker count (verified for `n_jobs = 1…16`).
 - `spieceasiSubsampleFraction`: unset by default. When unset, the StARS subsample
   fraction follows the R reference (`pulsar::.ratcheck`): `0.8` for `n <= 144`
   samples, otherwise `10*sqrt(n)/n`. Set it (e.g. `0.8`) to force a value.
@@ -229,6 +235,25 @@ Runtime behavior implemented by the app:
   - `spieceasiNLambdas <= 10`
   - `spieceasiNSubsamples <= 8`
   - `spieceasiMaxIter <= 3000`
+
+#### Performance (measured)
+
+The MB solver is compiled (`spieceasi._mb_core`, a pybind11 translation of
+`huge_core.cpp`); the pure-Python reference stays as the fallback. On the
+development machine (4 physical / 8 logical cores), full pipeline, median of 3:
+
+| case | pure Python | compiled, n_jobs=1 | compiled, n_jobs=4 | R (`spiec.easi`) |
+|------|-------------|--------------------|--------------------|------------------|
+| p=30, n=100 | 97.8 s | 0.52 s | 0.24 s | 2.11 s |
+| p=50, n=50 | 453.4 s | 3.80 s | 1.50 s | 4.45 s |
+| p=100, n=80 | 1565.8 s | 21.6 s | **8.73 s** | 14.04 s |
+
+So with 4 workers the p=100 pipeline is faster than the R reference. The
+compiled core is **not** bit-identical to the pure-Python reference (differences
+at the 1e-13…1e-14 level; identical discovered structure except in a deliberately
+degenerate family), it performs *the same number of coordinate-descent sweeps*
+as `huge`, and the remaining serial gap to R is R's OpenMP parallelism. Details,
+flags and caveats: `docs/PERFORMANCE.md`; packaging: `docs/PACKAGING.md`.
 
 ### Equivalence with R ("Equivalenza con R")
 

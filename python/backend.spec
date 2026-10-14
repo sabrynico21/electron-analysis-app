@@ -40,6 +40,13 @@ analysis = Analysis(
         "spieceasi.pipeline",
         "spieceasi.stars",
         "spieceasi.transforms",
+        # MB solver: the compiled core is a binary extension, list it explicitly
+        # so a missing build is a build error rather than a silent fallback to
+        # the pure-Python reference (which is ~100x slower).
+        "spieceasi.mb_solver",
+        "spieceasi.mb_solver_reference",
+        "spieceasi._mb_core",
+        "spieceasi.runtime",
     ],
     hookspath=[],
     hooksconfig={},
