@@ -1,7 +1,7 @@
 
 # Riepilogo semplice — i test eseguiti e i limiti
 
-Questo documento riassume, in parole semplici, come è stato controllato che la versione Python
+Questo documento riassume come è stato controllato che la versione Python
 del metodo **SPIEC-EASI (MB)** si comporti come la versione di riferimento scritta in R. Ogni
 numero viene dai documenti del progetto (`docs/AUDIT.md`, `docs/PERFORMANCE.md`,
 `docs/STATISTICAL_EQUIVALENCE.md`, `CHANGELOG.md`, `README.md`) o da un test eseguito su questa
@@ -23,7 +23,7 @@ macchina.
   i subcampioni di R vengono quindi **impostati a mano** dentro Python: così si isolano tutti i
   passaggi deterministici. L'unico test che **non** usa questo trucco è quello di equivalenza
   statistica (punto 13 della tabella).
-- Le **tolleranze** ("quanto scarto accettiamo") sono dichiarate **prima** di eseguire i test
+- Le **tolleranze** sono dichiarate **prima** di eseguire i test
   e non sono mai state allargate per far passare un test. Nei file golden non è stato cambiato
   nulla.
 
@@ -31,9 +31,6 @@ macchina.
 
 ## Tabella dei test
 
-Come leggere le tabelle: ogni riga è un controllo. La colonna **Esito** dice il risultato
-sull'ultima esecuzione, il numero tra parentesi è quanti casi sono stati eseguiti, e lo scarto
-(per esempio `1e-13`) è la differenza massima ammessa rispetto a R — più piccolo è, meglio è.
 I test sono **153** in tutto: 102 veloci e 51 lenti.
 
 ### A. Confronto con R, passo per passo
@@ -43,8 +40,17 @@ I test sono **153** in tutto: 102 veloci e 51 lenti.
 | **1. Trasformazione dei dati (CLR)** | È il primo passo: un errore qui si trascina su tutto il resto | Si confrontano i valori trasformati sugli stessi dati | Passa. Scarto ≤ 2e-15 (fase 2); 1.3e-15…3.6e-15 sui 23 casi estesi |
 | **2. Parametri da provare** (λ massimo e griglia) | Da questi valori dipende tutta la ricerca della rete | Si confrontano il valore massimo e la griglia generati dai due programmi | Passa. Scarto 0…3.3e-16 (λ massimo) e 0…1.7e-16 (griglia) |
 | **3. Solver a valore fisso** (i coefficienti) | È il cuore del calcolo: qui R usa una routine in C++ e Python una riscrittura | Si confrontano i coefficienti calcolati a un valore fissato | Passa. Scarto ≤ 1.1e-13 (fase 2); 6.7e-15…7.4e-13 sui casi estesi |
-| **4. Simmetrizzazione e pesi dei lati** | La rete finale non è orientata: se cambia la regola, cambiano i lati | Si confrontano i lati e i pesi con la regola di R | Passa. 0 lati di differenza a valore fisso; pesi = media dei due versi |
+| **4. Simmetrizzazione e pesi dei lati** | Il calcolo produce una tabella *orientata* ("chi predice chi"), ma la rete di co-occorrenza non ha versi: i lati vanno resi simmetrici. Se la regola di combinazione cambia, cambia la rete | Si prende la tabella orientata, si applica la regola di R (lato presente se **almeno uno dei due versi** è diverso da zero; peso del lato = **media dei due versi**) e si confronta con R sia l'elenco dei lati sia i pesi | Passa. Elenco dei lati **identico** a R (0 lati di differenza) su tutti i casi confrontati; pesi pari alla media dei due versi, come in R |
 | **5. Scelta del parametro finale (StARS)** | È il passo che decide "quanto fitta" la rete | Si confrontano la curva di instabilità e l'indice scelto | Passa. Curva ≤ 1e-15 (grezza e cumulata); indice e λ sempre uguali |
+
+> **Che cosa significa il punto 4, in parole semplici.** Per ogni coppia di microrganismi il
+> calcolo produce **due** numeri: "quanto A spiega B" e "quanto B spiega A". Sono diversi — è una
+> tabella orientata, come una lista di strade a senso unico. Una rete di co-occorrenza però non ha
+> versi: il lato fra A e B c'è oppure non c'è. R decide così: il lato esiste se **almeno uno dei due
+> versi** è diverso da zero, e la sua forza (il **peso**) è la **media dei due versi**. Anche Python
+> fa esattamente questo. Il test controlla due cose: che l'elenco dei lati sia **identico** a quello
+> di R, e che i pesi siano la media dei due versi. È un controllo importante perché un lato in più o
+> in meno significa una **rete diversa**, non solo un numero leggermente diverso.
 
 ### B. Casi difficili e dimensioni realistiche
 
@@ -72,15 +78,6 @@ I test sono **153** in tutto: 102 veloci e 51 lenti.
 
 ## Prestazioni: la versione attuale contro R
 
-**Che cosa significa "prima" e "dopo".** Il progetto ha avuto due versioni del solver (la parte
-che fa il calcolo pesante):
-
-- **prima** = solver scritto in Python puro (molto lento);
-- **dopo** = solver **compilato** in C++, cioè **la versione in uso oggi**.
-
-La versione "prima" non è più usata: sotto serve solo a mostrare quanto si è guadagnato, e non
-c'è motivo di confrontarla con R caso per caso. **Il confronto che conta è quello con R**, ed è
-fatto con la versione attuale.
 
 Macchina di misura: AMD Ryzen 5 3550H (**4 core fisici / 8 logici**), Linux x86_64, Python 3.14.7,
 R 4.6.1. Pipeline completa (StARS + fit finale), mediana di 3 esecuzioni, **un solo lavoratore su
@@ -92,8 +89,6 @@ entrambi i lati** (confronto alla pari).
 | p=50, n=50 | 3.691 s | 4.450 s | **1,2× più veloce di R** |
 | p=100, n=80 | 21.348 s | 14.040 s | **1,5× più lento di R** |
 
-Per dare l'ordine di grandezza del guadagno già ottenuto: con il vecchio solver in Python puro gli
-stessi tre casi richiedevano 97.819 / 453.408 / 1565.844 s, cioè **da 73 a 190 volte** di più.
 
 **Con più lavoratori** (nome tecnico "n_jobs"; il valore predefinito è il numero di core fisici,
 quindi 4 su questa macchina):
@@ -108,12 +103,6 @@ quindi 4 su questa macchina):
 Nota: le due tabelle vengono da due serie di misure diverse (stessa macchina e stesse condizioni),
 e per questo il caso p=100 a un lavoratore compare come 21.348 s in una e 21.619 s nell'altra.
 
-Altri numeri misurati:
-
-- la suite di test veloce passa da 662 s (vecchio solver) a 18.66 s;
-- l'avvio dell'eseguibile impacchettato su un caso piccolo passa da 10.740 s a **1.504 s**
-  (di cui circa 9.2 s erano il vecchio solver e una libreria importata inutilmente);
-- a p = 100 il 99.7% del tempo è dentro il solver; tutto il resto del Python pesa lo 0.1%.
 
 **Perché a p=100, con un solo lavoratore, restiamo più lenti di R.** R (pacchetto `huge`) è
 compilato con OpenMP, cioè usa più core *al proprio interno*: sul solo solver, a p=100 passa da
