@@ -280,6 +280,30 @@ Known and documented deviations (solver arithmetic, StARS RNG, the application's
 reduced `max_iter` cap in the tiny/high-dimensional regime) are listed in
 `docs/AUDIT.md`. Measured runtimes are in `docs/PERFORMANCE.md`.
 
+#### Platform scope of that verification
+
+The equivalence and bit-identity results above were **measured only on Linux
+x86-64 with GCC** (the development machine: AMD Ryzen 5 3550H, glibc 2.44, GCC
+with the flags listed in `docs/PERFORMANCE.md`; the R reference is R 4.6.1 +
+SpiecEasi 1.99.0 + huge 2.0.1 + pulsar 0.3.13 built on the same machine).
+
+**Windows and macOS (Intel and ARM) are covered by the CI, but they are not
+proven identical** — the claim is limited to the tested platform until those CI
+jobs actually run and pass there. The `equivalence-platforms` job in
+`.github/workflows/ci.yml` builds the extension and runs, on
+`ubuntu-latest` (x86-64/GCC), `macos-13` (Intel), `macos-14` (ARM) and
+`windows-latest` (MSVC):
+
+- the **full extension-vs-pure-Python sweep** (`test_mb_core_equivalence.py -m slow`,
+  244 problems + the extended goldens), and
+- the **R golden suites** (`test_equivalence.py`, `test_equivalence_extended.py`)
+  against R with `huge`/`pulsar`/SpiecEasi installed on the runner.
+
+Different compilers, libm implementations and CPU architectures can change the
+last bits of floating-point results, so an equivalence statement is only as wide
+as the set of platforms that ran the comparison. Until those jobs pass on a
+given platform, treat equivalence and bit-identity as **Linux x86-64 only**.
+
 ### Where your results live
 
 Everything stays on your computer, inside the application data folder:

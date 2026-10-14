@@ -40,6 +40,56 @@ jobs:
       - name: Golden fixture checksums
         run: python -m pytest spiec-easi-python/tests/test_golden_checksums.py -q
 
+  equivalence-platforms:
+    # The equivalence / bit-identity claims are only *demonstrated* on the
+    # platform that actually ran the sweep. This job runs the FULL sweep
+    # (244 problems + goldens) and the R golden suites on every target platform
+    # so the claim is backed by evidence there too, not only by a build.
+    name: equivalence (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest   # Linux x86-64, GCC
+          - os: macos-13        # macOS Intel, Apple clang
+          - os: macos-14        # macOS arm64 (Apple silicon)
+          - os: windows-latest  # Windows x86-64, MSVC (+ Rtools)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build dependencies
+        run: python -m pip install --upgrade pip setuptools wheel pybind11 pytest
+      - name: Build and install the package (compiles spieceasi._mb_core)
+        run: python -m pip install --no-build-isolation -e spiec-easi-python
+      - name: The compiled core must be present and selected
+        run: |
+          python - <<'PY'
+          import spieceasi.mb_solver as m
+          assert m.HAVE_CPP_SOLVER, "the compiled MB core was not built"
+          print("solver:", m.active_solver())
+          PY
+      - name: Extension vs pure-Python reference (full 244-problem sweep)
+        run: python -m pytest spiec-easi-python/tests/test_mb_core_equivalence.py -m slow -q -s
+      # The R golden suites are the only part that needs R 4.x with
+      # huge/pulsar/SpiecEasi; they run here so that "matches R" is demonstrated
+      # per platform and not only on the development machine.
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+      - name: Install the R reference packages
+        shell: Rscript {0}
+        run: |
+          install.packages(c("huge", "pulsar", "remotes"))
+          remotes::install_github("zdk123/SpiecEasi")
+      - name: Install rpy2
+        run: python -m pip install rpy2
+      - name: R golden equivalence (all cases, both configs)
+        run: python -m pytest spiec-easi-python/tests/test_equivalence.py spiec-easi-python/tests/test_equivalence_extended.py -m slow -q -s
+
   reference-fallback:
     name: pure-Python fallback (no compiled core)
     runs-on: ubuntu-latest

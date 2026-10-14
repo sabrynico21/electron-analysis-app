@@ -291,7 +291,8 @@ con `S` passata in ordine Fortran e **GIL rilasciato** attorno al nucleo numeric
    (BIT-IDENTICO su tutti i 248 problemi del gate; +5.3 % a p=100, +16 % a p=300, +36 % a p=500).
    NON è la riscrittura di cui avverte il sorgente di `huge` (quella resta dentro la colonna `j`
    usando la simmetria ed era 2× più lenta per loro): vedi `docs/PERFORMANCE.md`.
-7. **Nessuna affermazione di equivalenza generale.** Le verifiche sotto valgono **sui casi testati**.
+7. **Nessuna affermazione di equivalenza generale.** Le verifiche sotto valgono **sui casi testati** e
+   **sulla sola piattaforma su cui sono state eseguite** (Linux x86-64, GCC): vedi §7.7.
 
 L'esecuzione **multi-thread dei subcampioni StARS** (FASE 3 a) non è una deviazione numerica: le
 soluzioni sono bit-identiche per `n_jobs = 1…16` (aggregazione a ordine fisso, nessuno stato globale),
@@ -434,3 +435,28 @@ le sei scene). In tutte le sei scene entrambe le implementazioni selezionano **l
 il modello vuoto (scelta intenzionale) e R a volte conserva il lato `argmax|cor|`. È la stessa
 indeterminazione di §2.E osservata a livello di rete finale; i margini di quel test
 (`STOCHASTIC_BASELINE_TOLERANCE`) sono dichiarati a priori e **non** sono stati allargati.
+
+### 7.7 Perimetro delle verifiche: piattaforma
+
+**Tutte** le verifiche di equivalenza e di bit-identità riportate in questa sezione e in §5 sono state
+eseguite **solo su Linux x86-64 con GCC**, sulla macchina di sviluppo
+(AMD Ryzen 5 3550H, glibc 2.44, flag di compilazione in `docs/PERFORMANCE.md`), contro
+R 4.6.1 + SpiecEasi 1.99.0 + huge 2.0.1 + pulsar 0.3.13 compilati con le stesse impostazioni della
+distribuzione.
+
+**Windows e macOS non sono dimostrati identici.** Sono coperti dalla CI, ma il risultato non può essere
+esteso a quelle piattaforme finché i job non girano e passano lì: compilatori diversi (MSVC, Apple
+clang), implementazioni di libm diverse e architetture diverse (x86-64 vs ARM64) possono cambiare gli
+ultimi bit dei risultati in virgola mobile, e la differenza residua misurata è già a livello 1e-13…1e-14.
+
+Il job `equivalence-platforms` di `.github/workflows/ci.yml` esegue, su
+`ubuntu-latest` (x86-64/GCC), `macos-13` (Intel), `macos-14` (ARM) e `windows-latest` (MSVC + Rtools):
+
+- la **sweep completa estensione-vs-riferimento** (`test_mb_core_equivalence.py -m slow`: 244 problemi
+  + i golden estesi), e
+- le **suite golden contro R** (`test_equivalence.py`, `test_equivalence_extended.py`), con
+  R + `huge`/`pulsar`/SpiecEasi installati sul runner e `rpy2`.
+
+Non è un job di sola compilazione: la compilazione verificata dal job `wheels` non è evidenza di
+equivalenza numerica. Fino al passaggio di questi job, l'affermazione di equivalenza e di bit-identità
+di questo documento va letta come **valida su Linux x86-64 (GCC)**.

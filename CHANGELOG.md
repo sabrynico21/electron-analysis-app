@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Scope of the equivalence and bit-identity claims.** All the equivalence and
+  bit-identity results documented so far were measured **only on Linux x86-64
+  with GCC**. Windows and macOS are covered by CI but are **not proven
+  identical** until those jobs pass there; the claims should be read as
+  Linux x86-64 (GCC) only. See the "Platform scope" subsection in `README.md`
+  and §7.7 in `docs/AUDIT.md`.
+- **Lint cleanup, no behaviour change.** `ruff` on `python/analysis.py` and
+  `spiec-easi-python/tests/test_app_integration.py`: 13 findings → 0 (import
+  order, redundant f-strings, an unnecessary `int()` around `round()`, an
+  `enumerate()` for the SparCC bootstrap counter, an explicitly annotated
+  top-level `except Exception`, `zip(strict=False)`). No golden, tolerance or
+  exception was touched; the analyze output of a sample dataset is identical
+  before and after.
 - **Default joblib backend for StARS: `threads` (was `processes`).** The compiled
   MB core releases the GIL and the subsamples are aggregated in a fixed order, so
   a thread pool is both safe and faster (2.2×–3.2× at 4–8 workers on the
@@ -39,6 +52,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **CI: the full equivalence sweep now runs on every target platform.** The new
+  `equivalence-platforms` job in `.github/workflows/ci.yml` builds the extension
+  and runs the complete extension-vs-reference sweep
+  (`test_mb_core_equivalence.py -m slow`, 244 problems + the extended goldens)
+  *and* the R golden suites (`test_equivalence*.py`, with R + `huge`/`pulsar`/
+  SpiecEasi + `rpy2` on the runner) on Linux x86-64, macOS Intel (`macos-13`),
+  macOS ARM (`macos-14`) and Windows x64. Previously the Windows/macOS jobs only
+  built wheels, which is not numeric evidence.
 - **Compiled MB core (`spieceasi._mb_core`).** A pybind11 extension translating
   `huge_core.cpp` `mb` / `mb_partial_residual` / `mb_refine_active`. It is an
   accelerator, not a requirement: `spieceasi.mb_solver_reference` keeps the
