@@ -98,3 +98,27 @@ MIN_INTERIOR_LAMBDA_SELECTIONS = 3
 # Fase 5 (expanded synthetic benchmark) minimum topology coverage.
 MIN_EXPANDED_SCENARIO_FAMILIES = 3
 MIN_EXPANDED_SCENARIOS = 6
+
+
+# FASE 2 (compiled MB core vs pure-Python reference).  The sweep compares the two
+# implementations problem by problem.  For the non-degenerate families the
+# criterion stays strict (coefficient agreement near machine precision and exact
+# support equality).  For the deliberately degenerate family - two columns made
+# collinear to 1e-9, so the lasso objective is almost flat and the solution is not
+# unique - coefficient agreement is *not* a meaningful criterion.  What is
+# required there instead is that each returned solution is a valid optimum of the
+# same reduced nodewise problem (response coordinate excluded, as `huge` does):
+#
+#   * KKT residual: `huge` converges on coordinate updates below thol = 1e-4, so
+#     the natural scale for the residual gradient imbalance is one order of
+#     magnitude above it, 10 * thol = 1e-3;
+#   * objective value: two near-optimal points whose coefficient deviation is
+#     bounded by thol differ in objective by at most thol times the O(1) scale of
+#     the problem, i.e. 1e-4; 1e-5 is one order of magnitude below that and two
+#     orders of magnitude below the smallest lambda on the tested paths.
+#
+# Both bounds are declared here a priori, derived from the solver tolerance, and
+# are not tuned on the measured outcome.  The difference against the reference on
+# this family is still computed and reported as information.
+DEGENERATE_KKT_VIOLATION_MAX = 1e-3
+DEGENERATE_OBJECTIVE_GAP_MAX = 1e-5
