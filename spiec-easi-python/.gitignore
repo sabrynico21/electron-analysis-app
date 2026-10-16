@@ -23,3 +23,5 @@ tests/real_data/data/
 tests/real_data/golden/
 tests/real_data/results/point_f/S.tsv
 tests/real_data/results/point_f/spmb_adj_r.tsv
+tests/real_data/results/point_f_validity/S.tsv
+tests/real_data/results/point_f_validity/beta_idx1_5.tsv

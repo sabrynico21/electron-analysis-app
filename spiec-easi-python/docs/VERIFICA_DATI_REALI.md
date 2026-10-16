@@ -729,11 +729,15 @@ Dati grezzi e riepiloghi (con SHA-256):
 
 **Totale: 160 seed → 150 `identico`, 10 con solver divergente (L2), 0 `diverso`.**
 
+**Sintesi di validità:** *verificato sui casi testati; non verificato su tabelle
+non filtrate con generi collineari (p=1135)* (Appendice F).
+
 ### E.2 Limiti dei risultati
 
-- **Campione piccolo**: `n=10` seed (5 per R6/L3); Wilson ampi e **non** garanzia.
-- **Una sola macchina / piattaforma**: Linux x86-64 (Ryzen 5 3550H); la parità è
-  dimostrata solo qui.
+- **Campione piccolo**: **`n=5–10` seed per caso** (5 per R6/L3). Gli intervalli
+  di **Wilson sono ampi e non sono una garanzia** di equivalenza generale.
+- **Una sola macchina / piattaforma**: **Linux x86-64** (Ryzen 5 3550H); la parità
+  è dimostrata solo qui.
 - **Config fissa**: default (`nlambda=20`, ratio `1e-3`, `rep.num=20`, soglia
   `0.05`, regola `or`, `max_iter=10000`); non generalizzabile ad altre config.
 - **Subcampioni iniettati**: gli indici di R sono iniettati in Python ⇒ si
@@ -770,6 +774,22 @@ Dati grezzi e riepiloghi (con SHA-256):
    subcampioni e tutti i λ. Non è una contraddizione (il per-seed registra la
    prima occorrenza), ma va letto insieme alla Appendice B.2b.
 
+### E.5 Collinearità e filtro di prevalenza (utile per l'app)
+
+Generi con `|cor| ≥ 0.999` (correlazione del CLR sui 96 campioni) sulla **tabella
+reale**, per filtro di prevalenza:
+
+| Filtro | p | coppie con \|cor\| ≥ 0.999 | generi coinvolti |
+| --- | --- | --- | --- |
+| nessuno | 1135 | **57** | **81** (7.1%) |
+| ≥ 5% (L3) | 691 | **0** | **0** |
+| ≥ 10% | 555 | **0** | **0** |
+| ≥ 20% (R6) | 415 | **0** | **0** |
+
+Il **filtro ≥ 5%** — quello consigliato per l'app — **rimuove già tutte** le
+collinearità esatte del dataset reale; sono le tabelle **non filtrate** (p=1135) a
+contenerle, ed è lì che la parità **non** è verificata.
+
 _(Fine Appendice E.)_
 
 ---
@@ -798,6 +818,38 @@ con il default): **risultati identici** (`threads_1_vs_default_identical = TRUE`
 
 **Primo punto di divergenza: λ idx 1** (1-based 2), **12 lati diversi**. A
 `λ.max` (idx 0) i risultati coincidono.
+
+### F.bis — Validità (KKT/obiettivo) e "S di R" ai primi λ divergenti (idx 1–5)
+
+Applicando il criterio dichiarato (**KKT ≤ `1e-3`**, **scarto obiettivo ≤ `1e-5`**)
+a **entrambe** le soluzioni su R's S, e la diagnostica **"S di R"**:
+
+- **S di R**: `max|S_own − S_R| = 3.94e-15` ⇒ la nostra S e quella di R
+  **coincidono** (a macchina); alimentare il solver con la S di R **non cambia
+  nulla** ⇒ **la divergenza non nasce da S** (come già per L2).
+
+| λ idx | λ | KKT (R = Python-S_R = Python-S_own) | scarto obiettivo (R vs Python) | entrambe valide | lati diversi |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0.695193 | 1.52e-05 | 1.87e-10 | **sì** | 12 |
+| 2 | 0.483293 | 2.58e-05 | 3.87e-10 | **sì** | 21 |
+| 3 | 0.335982 | 3.49e-05 | 1.70e-09 | **sì** | 30 |
+| 4 | 0.233572 | 4.52e-05 | 2.40e-08 | **sì** | 50 |
+| 5 | 0.162378 | 5.45e-05 | 1.47e-09 | **sì** | 123 |
+
+I primi 5 λ divergenti hanno quindi **entrambe le soluzioni valide** (KKT identico
+per R e Python, obiettivo uguale entro `1e-5`): la divergenza è **soluzioni
+multiple quasi-ottime**.
+
+**Dichiarazioni (esplicite):**
+
+- **`p=1135` NON è verificato come equivalente a R.** Il percorso del solver
+  diverge ai λ interni (26684 lati sul path) e **non** è stata eseguita l'intera
+  pipeline StARS su `p=1135`; quindi **nessuna** affermazione di equivalenza è
+  supportata per questo caso.
+- **L'ipotesi sul tie-breaking NON è provata.** Il fatto che entrambe le
+  soluzioni siano KKT-valide e con obiettivo uguale è **coerente** con un ottimo
+  **piatto/degenere** (`n=76 ≪ p=1135`, collinearità esatta), ma **non dimostra**
+  che la causa sia il tie-breaking ai soft-threshold.
 
 ### Contatori sweep / aggiornamenti di coordinata
 
