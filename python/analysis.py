@@ -539,7 +539,7 @@ def _compute_spieceasi_for_matrix(
     bypassing the internal RNG, so equivalence tests can feed R's exact
     subsamples. The default (``None``) keeps the normal random behaviour.
     """
-    from spieceasi import spiec_easi_mb
+    from spieceasi import spiec_easi
 
     start_pct, end_pct = (progress_range or (0.0, 0.0))
 
@@ -595,49 +595,25 @@ def _compute_spieceasi_for_matrix(
     # matching the R SpiecEasi reference; an explicit value still overrides it.
     _raw_frac = params.get('spieceasiSubsampleFraction')
     subsample_fraction = float(_raw_frac) if _raw_frac else None
-    max_iter = int(params.get('spieceasiMaxIter', 10_000) or 10_000)
-    # Threads, never processes: joblib's loky (process) backend re-executes
-    # sys.executable with its own bootstrap arguments, which for a PyInstaller
-    # binary is this very CLI ("unknown command: -B"). The StARS subsamples are
-    # independent and aggregated in a fixed order, and the compiled MB core
-    # releases the GIL, so threads give real parallelism and bit-identical
-    # results for any worker count. The default worker count comes from the
-    # *physical* cores (over-subscription is worse than under-use) and
-    # `spieceasiJobs` overrides it.
-    from spieceasi.mb_solver import HAVE_CPP_SOLVER, active_solver
-    from spieceasi.runtime import default_n_jobs, physical_core_count
-
-    prefer = 'threads'
-    physical_cores = physical_core_count()
-    default_jobs = default_n_jobs()
+    # Worker processes for the StARS subsample loop. The port runs the
+    # subsamples in a process pool and aggregates them in a fixed order, so
+    # results are identical for any worker count. Default: ~physical cores.
+    default_jobs = max(1, (os.cpu_count() or 1) // 2)
     n_jobs = int(params.get('spieceasiJobs', default_jobs) or 1)
     n_jobs = max(1, n_jobs)
-    solver = active_solver()
-    log(f"  SPIEC-EASI solver: {solver} (compiled MB core)" if HAVE_CPP_SOLVER
-        else f"  SPIEC-EASI solver: {solver}")
-    if not HAVE_CPP_SOLVER:
-        log(
-            "  WARNING: the compiled MB core (spieceasi._mb_core) is not available "
-            "in this build; falling back to the pure-Python reference solver, "
-            "which is roughly two orders of magnitude slower."
-        )
+    log(f"  SPIEC-EASI worker processes: {n_jobs}")
 
     # With very few samples and hundreds of taxa, MB+StARS can require a huge
     # number of Lasso fits. Reduce defaults in that regime unless the user has
     # explicitly overridden them.
-    has_user_lambdas = 'spieceasiNLambdas' in params
-    has_user_subsamples = 'spieceasiNSubsamples' in params
-    has_user_max_iter = 'spieceasiMaxIter' in params
     if n_samples <= 10 and n_taxa >= 200:
-        if not has_user_lambdas:
+        # Trim the workload in the very-high-dimensional, tiny-sample regime
+        # unless the user overrode the settings explicitly. (The port follows
+        # R's fixed MB MAX_ITER=10000; there is no max_iter override.)
+        if 'spieceasiNLambdas' not in params:
             n_lambdas = min(n_lambdas, 10)
-        if not has_user_subsamples:
+        if 'spieceasiNSubsamples' not in params:
             n_subsamples = min(n_subsamples, 8)
-        if not has_user_max_iter:
-            # Intentional deviation from R (which always uses MAX_ITER=10000):
-            # cap iterations for very high-dimensional, tiny-sample regimes to
-            # bound runtime. Documented in spiec-easi-python/docs/AUDIT.md.
-            max_iter = min(max_iter, 3000)
 
     estimated_model_fits = (n_lambdas * n_subsamples + 1) * n_taxa
     log(
@@ -647,40 +623,42 @@ def _compute_spieceasi_for_matrix(
     )
     log(
         "  SPIEC-EASI settings: "
-        f"n_jobs={n_jobs}, parallel_backend={prefer}, "
-        f"physical_cores={physical_cores}, max_iter={max_iter}, "
+        f"n_jobs={n_jobs}, "
         f"lambda_min_ratio={lambda_min_ratio}, stars_threshold={stars_threshold}"
     )
 
-    def _on_stars_step(done: int, total: int, alpha: float, instability: float) -> None:
+    def _on_progress(done: int, total: int) -> None:
         # Reserve 5% for setup and 95% for StARS+final fit.
         _progress(0.05 + 0.9 * (done / max(1, total)))
-        log(
-            f"  SPIEC-EASI StARS progress: {done}/{total} lambdas "
-            f"(alpha={alpha:.6g}, instability={instability:.6f})"
-        )
+        log(f"  SPIEC-EASI StARS progress: {done}/{total} subsamples")
 
     try:
-        result = spiec_easi_mb(
+        result = spiec_easi(
             X,
-            n_lambdas=n_lambdas,
+            method='mb',
+            sel_criterion='stars',
+            verbose=False,
+            nlambda=n_lambdas,
             lambda_min_ratio=lambda_min_ratio,
-            n_subsamples=n_subsamples,
-            subsample_fraction=subsample_fraction,
-            stars_threshold=stars_threshold,
-            sym_rule='or',
-            random_state=17,
-            max_iter=max_iter,
+            pulsar_params={
+                'rep_num': n_subsamples,
+                'thresh': stars_threshold,
+                'subsample_ratio': subsample_fraction,
+                'seed': 17,
+            },
+            sym='or',
+            subsample_indices=subsamples,
             n_jobs=n_jobs,
-            prefer=prefer,
-            require_samples_gt_taxa=False,
-            stars_progress_callback=_on_stars_step,
-            subsamples=subsamples,
+            progress_callback=_on_progress,
         )
     except Exception as exc:
         raise RuntimeError(f'SPIEC-EASI MB failed: {exc}') from exc
 
     _progress(1.0)
+
+    adjacency = result['refit']
+    edge_stability = result['merge'][result['opt_index'] - 1]
+    selected_lambda = float(result['opt_lambda'])
 
     corr_matrix = {feature: {} for feature in features}
     pval_matrix = {feature: {} for feature in features}
@@ -688,9 +666,9 @@ def _compute_spieceasi_for_matrix(
     for i, left in enumerate(features):
         for j in range(i + 1, len(features)):
             right = features[j]
-            is_edge = int(result.adjacency[i, j]) != 0
+            is_edge = int(adjacency[i, j]) != 0
             if is_edge:
-                correlation = float(result.weights[i, j])
+                correlation = float(edge_stability[i, j])
                 p_value = 0.0
                 edge_count += 1
             else:
@@ -702,7 +680,7 @@ def _compute_spieceasi_for_matrix(
             pval_matrix[right][left] = p_value
 
     diagnostics = {
-        'selected_lambda': float(result.selected_lambda),
+        'selected_lambda': selected_lambda,
         'edge_count': edge_count,
         'n_samples': int(X.shape[0]),
         'n_taxa': int(X.shape[1]),
@@ -789,6 +767,178 @@ def _group_features_before_correlation(
         f"{len(ordered_features)} original features -> {len(ordered_grouped)} grouped taxa"
     )
     return grouped_by_sample, ordered_grouped
+
+
+def _restrict_features(matrix_by_sample: dict, kept_features: list) -> dict:
+    """Drop every feature not in ``kept_features`` from the sample→values map.
+
+    Grouping aggregates *all* features still present in each sample, so removing
+    the filtered taxa from the matrix (not just from the feature list) is what
+    actually keeps them out of the correlation step.
+    """
+    kept = set(kept_features)
+    return {
+        sample_id: {
+            feature: value
+            for feature, value in values.items()
+            if feature in kept
+        }
+        for sample_id, values in matrix_by_sample.items()
+    }
+
+
+def _apply_taxa_filters(
+    matrix_by_sample: dict,
+    features: list,
+    domain_label: str,
+    params: dict,
+) -> tuple[dict, list, dict]:
+    """Apply the user-configured taxa filters to one domain.
+
+    Filters run on the individual features (OTU/ASV level) *before* taxonomic
+    grouping, using each domain's own samples — the conventional order: rare and
+    noisy features are removed first, then the survivors are aggregated.
+
+    Nothing here transforms the matrix that reaches the correlation step: the
+    relative abundances are computed only to evaluate the filters. Returns
+    ``(restricted_matrix, kept_features, report)``.
+    """
+    config = params.get('taxaFiltering') or {}
+    samples = list(matrix_by_sample.keys())
+
+    report = {
+        'domain': domain_label,
+        'enabled': bool(config.get('enabled')),
+        'total_samples': len(samples),
+        'before': len(features),
+        'after': len(features),
+        'filters': {},
+        'excluded': [],
+    }
+    if not config.get('enabled') or not features or not samples:
+        return matrix_by_sample, features, report
+
+    # Per-sample totals (relative-abundance denominators). Only features of this
+    # domain participate, so relative abundances are domain-relative. A sample
+    # whose total is zero contributes 0 to every taxon.
+    sample_totals = {}
+    for sample_id in samples:
+        values = matrix_by_sample[sample_id]
+        sample_totals[sample_id] = sum(float(values.get(feature, 0.0)) for feature in features)
+
+    prevalence_cfg = config.get('prevalence') or {}
+    mean_cfg = config.get('meanRelativeAbundance') or {}
+    count_cfg = config.get('totalCount') or {}
+    variability_cfg = config.get('variability') or {}
+
+    prevalence_enabled = bool(prevalence_cfg.get('enabled'))
+    mean_enabled = bool(mean_cfg.get('enabled'))
+    count_enabled = bool(count_cfg.get('enabled'))
+    variability_enabled = bool(variability_cfg.get('enabled'))
+
+    prevalence_percent = float(prevalence_cfg.get('percent', 0) or 0)
+    mean_threshold = float(mean_cfg.get('percent', 0) or 0) / 100.0
+    count_threshold = float(count_cfg.get('minCount', 0) or 0)
+    variance_threshold = float(variability_cfg.get('minVariance', 0) or 0)
+
+    # The total-count filter only makes sense for raw count data. If the values
+    # are not non-negative integers the threshold is a sum of relative/transformed
+    # values; warn instead of silently applying a meaningless cutoff.
+    if count_enabled:
+        looks_like_counts = all(
+            float(value).is_integer() and float(value) >= 0
+            for sample_id in samples
+            for value in matrix_by_sample[sample_id].values()
+        )
+        if not looks_like_counts:
+            log(
+                f"  WARNING: 'minimum total count' is enabled for {domain_label}, but the data "
+                "does not look like raw integer counts; the threshold may not be meaningful."
+            )
+
+    removed_by = {'prevalence': 0, 'meanRelativeAbundance': 0, 'totalCount': 0, 'variability': 0}
+    kept_features = []
+
+    for feature in features:
+        raw_values = [float(matrix_by_sample[sample_id].get(feature, 0.0)) for sample_id in samples]
+        total_count = sum(raw_values)
+        positive_count = sum(1 for value in raw_values if value > 0)
+        prevalence_frac = positive_count / len(samples)
+
+        relative_values = []
+        for sample_id, value in zip(samples, raw_values):
+            total = sample_totals.get(sample_id, 0.0)
+            relative_values.append(value / total if total > 0 else 0.0)
+        # Zero-abundance samples contribute 0 to the mean, so a taxon present in
+        # few samples is diluted rather than averaged over present samples only.
+        mean_relative = sum(relative_values) / len(relative_values) if relative_values else 0.0
+        # Population variance of the relative abundances (metric for filter D).
+        variance = (
+            sum((value - mean_relative) ** 2 for value in relative_values) / len(relative_values)
+            if relative_values else 0.0
+        )
+
+        reasons = []
+        if prevalence_enabled and prevalence_frac < (prevalence_percent / 100.0):
+            reasons.append('prevalence')
+        if mean_enabled and mean_relative < mean_threshold:
+            reasons.append('meanRelativeAbundance')
+        if count_enabled and total_count < count_threshold:
+            reasons.append('totalCount')
+        if variability_enabled and variance < variance_threshold:
+            reasons.append('variability')
+
+        if reasons:
+            for reason in reasons:
+                removed_by[reason] += 1
+            report['excluded'].append({
+                'taxon': feature,
+                'reasons': reasons,
+                'prevalence_percent': round(prevalence_frac * 100.0, 4),
+                'mean_relative_abundance_percent': round(mean_relative * 100.0, 6),
+                'total_count': total_count,
+                'relative_abundance_variance': variance,
+            })
+        else:
+            kept_features.append(feature)
+
+    report['after'] = len(kept_features)
+    report['filters'] = {
+        'prevalence': {
+            'enabled': prevalence_enabled,
+            'threshold_percent': prevalence_percent,
+            'removed': removed_by['prevalence'],
+        },
+        'meanRelativeAbundance': {
+            'enabled': mean_enabled,
+            'threshold_percent': mean_threshold * 100.0,
+            'removed': removed_by['meanRelativeAbundance'],
+        },
+        'totalCount': {
+            'enabled': count_enabled,
+            'threshold': count_threshold,
+            'removed': removed_by['totalCount'],
+        },
+        'variability': {
+            'enabled': variability_enabled,
+            'threshold': variance_threshold,
+            'removed': removed_by['variability'],
+        },
+    }
+
+    log(
+        f"Taxa filtering [{domain_label}]: {len(features)} -> {len(kept_features)} features "
+        f"({len(features) - len(kept_features)} removed) across {len(samples)} samples"
+    )
+    for name, info in report['filters'].items():
+        if info['enabled']:
+            log(
+                f"    - {name}: removed {info['removed']} "
+                f"(threshold {info.get('threshold_percent', info.get('threshold'))})"
+            )
+
+    restricted = _restrict_features(matrix_by_sample, kept_features)
+    return restricted, kept_features, report
 
 
 def _build_condition_pairs(
@@ -1378,6 +1528,42 @@ def run(job_id: str, files: dict, params: dict) -> dict:
         all_known_sample_ids
     ) if fungi_files else ({}, [])
 
+    # ── Taxa filtering (per domain, before grouping) ──────────────────────────
+    # Applied here so every downstream step (grouping, correlation, graphs) sees
+    # only the surviving taxa. Disabled master toggle ⇒ both calls are no-ops.
+    taxa_filtering_config = params.get('taxaFiltering') or {}
+    log(f"Taxa filtering enabled: {bool(taxa_filtering_config.get('enabled'))}")
+    taxa_filtering_report = {}
+    if bacteria_by_sample:
+        bacteria_by_sample, bacteria_features, bac_filter_report = _apply_taxa_filters(
+            bacteria_by_sample,
+            bacteria_features,
+            'bacteria',
+            params,
+        )
+        taxa_filtering_report['bacteria'] = bac_filter_report
+    if fungi_by_sample:
+        fungi_by_sample, fungi_features, fun_filter_report = _apply_taxa_filters(
+            fungi_by_sample,
+            fungi_features,
+            'fungi',
+            params,
+        )
+        taxa_filtering_report['fungi'] = fun_filter_report
+
+    # A domain that feeds the correlation must keep enough features to be
+    # meaningful; otherwise fail loudly instead of producing an empty graph.
+    if dataset_type in {'bacteria', 'both'} and bacteria_by_sample and len(bacteria_features) < 2:
+        raise ValueError(
+            f"Taxa filtering left only {len(bacteria_features)} bacteria feature(s). "
+            "Disable or relax the filters to keep at least 2 features."
+        )
+    if dataset_type in {'fungi', 'both'} and fungi_by_sample and len(fungi_features) < 2:
+        raise ValueError(
+            f"Taxa filtering left only {len(fungi_features)} fungi feature(s). "
+            "Disable or relax the filters to keep at least 2 features."
+        )
+
     bacteria_by_sample, bacteria_features = _group_features_before_correlation(
         bacteria_by_sample,
         bacteria_features,
@@ -1571,6 +1757,8 @@ def run(job_id: str, files: dict, params: dict) -> dict:
             "grouping_mode": grouping_mode,
             "p_value_threshold": p_value_threshold,
             "correlation_threshold": correlation_threshold,
+            "taxa_filtering_enabled": bool(taxa_filtering_config.get('enabled')),
+            "taxa_filtering": taxa_filtering_report,
             "p_value":   0.0312,
             "statistic": 4.721,
             "status":    "significant",

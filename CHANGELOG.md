@@ -8,134 +8,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Scope of the equivalence and bit-identity claims.** All the equivalence and
-  bit-identity results documented so far were measured **only on Linux x86-64
-  with GCC**. Windows and macOS are covered by CI but are **not proven
-  identical** until those jobs pass there; the claims should be read as
-  Linux x86-64 (GCC) only. See the "Platform scope" subsection in `README.md`
-  and §7.7 in `spiec-easi-python/docs/AUDIT.md`.
-- **Lint cleanup, no behaviour change.** `ruff` on `python/analysis.py` and
-  `spiec-easi-python/tests/test_app_integration.py`: 13 findings → 0 (import
-  order, redundant f-strings, an unnecessary `int()` around `round()`, an
-  `enumerate()` for the SparCC bootstrap counter, an explicitly annotated
-  top-level `except Exception`, `zip(strict=False)`). No golden, tolerance or
-  exception was touched; the analyze output of a sample dataset is identical
-  before and after.
-- **Default joblib backend for StARS: `threads` (was `processes`).** The compiled
-  MB core releases the GIL and the subsamples are aggregated in a fixed order, so
-  a thread pool is both safe and faster (2.2×–3.2× at 4–8 workers on the
-  benchmark cases). Results are bit-identical for any worker count; `prefer`
-  still accepts `"processes"` for callers that need it. This also removes the
-  failure mode that broke frozen executables (loky re-executing the binary).
-- **Default worker count now comes from the physical cores**, not from
-  `min(4, cpu_count)`: `spieceasi.runtime.default_n_jobs()` reads the physical
-  core count where the platform exposes it, falls back to `logical // 2`
-  (assume SMT) and then to 1. The desktop app uses it; `spieceasiJobs` (or
-  `n_jobs`) overrides it. On the development machine (4 physical / 8 logical) the
-  p=100 pipeline goes from 21.6 s serial to 8.7 s at 4 workers.
-- **Build backend.** `hatchling` → `setuptools` + `pybind11`, so the compiled MB
-  core can be built. `[tool.cibuildwheel]` builds wheels for CPython 3.10–3.14 on
-  Linux, macOS and Windows; its `test-command` fails if the compiled core is
-  missing from the wheel.
-- **SPIEC-EASI / StARS subsample fraction (application default).**
-  `python/analysis.py` no longer hard-codes `subsample_fraction=0.8`. When the
-  user does not specify a fraction, the library now follows `pulsar::.ratcheck`
-  exactly, as the R SpiecEasi reference does:
-  - `n_samples <= 144` → ratio `0.8`, size `floor(0.8 * n)`;
-  - `n_samples > 144` → ratio `10*sqrt(n)/n`, size `floor(10*sqrt(n))`.
+- **SPIEC-EASI backend replaced.** The standalone Python library in
+  `spiec-easi-python/` was rebuilt from scratch as a faithful port of the R
+  reference (`SpiecEasi` 1.99.0 + `huge` 2.0.1 + `pulsar` 0.3.13), `method="mb"`
+  only. The previous implementation — with its pybind11 `_mb_core` accelerator,
+  joblib `prefer="threads"` backend and `spieceasi.mb_solver` /
+  `spieceasi.runtime` helpers — was removed. `python/analysis.py` now calls the
+  new public API `spieceasi.spiec_easi(...)`.
+- **Worker count.** The StARS subsample loop now runs in a process pool
+  (`spieceasiJobs`); the subsamples are independent and aggregated in a fixed
+  order, so results are identical for any worker count. The joblib
+  `threads`-vs-`processes` backend choice and the compiled core are gone.
+- **`spieceasiMaxIter` is no longer used.** The port follows R's fixed MB solver
+  iteration limit (`MAX_ITER = 10000`); the previous per-case cap was a deviation
+  from R and has been removed. The `spieceasiNLambdas` / `spieceasiNSubsamples`
+  reductions in the tiny/high-dimensional regime (`n_samples <= 10` and
+  `n_taxa >= 200`) are kept.
 
-  **Behaviour change:** for datasets with more than 144 samples the StARS
-  subsamples are now *smaller* than before (e.g. `n = 200` → 141 instead of 160;
-  `n = 300` → 173 instead of 240). Results for such datasets may therefore differ
-  from previous releases. An explicit value can still be forced through the
-  `spieceasiSubsampleFraction` parameter, which is passed through unchanged.
+### Removed
 
-### Added
-
-- **CI: the full equivalence sweep now runs on every target platform.** The new
-  `equivalence-platforms` job in `.github/workflows/ci.yml` builds the extension
-  and runs the complete extension-vs-reference sweep
-  (`test_mb_core_equivalence.py -m slow`, 244 problems + the extended goldens)
-  *and* the R golden suites (`test_equivalence*.py`, with R + `huge`/`pulsar`/
-  SpiecEasi + `rpy2` on the runner) on Linux x86-64, macOS Intel (`macos-13`),
-  macOS ARM (`macos-14`) and Windows x64. Previously the Windows/macOS jobs only
-  built wheels, which is not numeric evidence.
-- **Compiled MB core (`spieceasi._mb_core`).** A pybind11 extension translating
-  `huge_core.cpp` `mb` / `mb_partial_residual` / `mb_refine_active`. It is an
-  accelerator, not a requirement: `spieceasi.mb_solver_reference` keeps the
-  pure-Python solver as the reference implementation and as the automatic
-  fallback (a `RuntimeWarning` is emitted when the compiled module cannot be
-  imported). See `spiec-easi-python/docs/AUDIT.md` §7 for the declared deviations.
-
-  **Speed-up on the measured cases** (serial, median of 3, full pipeline):
-  97.8 s → 0.57 s (`ds2`, p=30), 453.4 s → 3.99 s (p=50), 1565.8 s → 22.06 s
-  (p=100); versus R that is 0.27× / 0.90× / 1.57×. The non-slow test suite goes
-  from 662 s to 18.66 s. **The measured outputs are unchanged**: selected lambda
-  and edge count are identical to the pure-Python solver and to R on all
-  benchmark cases.
-
-  **Accuracy declaration.** On the tested cases the extension is *not*
-  bit-identical to the pure-Python reference nor to R: the maximum coefficient
-  difference is 9.470e-14 on 244 random problems (1.652e-13 versus the released
-  goldens) and the discovered support is identical in every non-degenerate case.
-  In a deliberately degenerate family (relative collinearity 1e-9) the lasso
-  solution is not unique, the two implementations and R land in different points
-  of the same solution set (max difference 1.881e-01, 25/244 problems, 40 lambda
-  blocks), and R does not single out either of them. This is reported as-is; no
-  tolerance was widened to hide it.
-- `spieceasi.stars.infer_subsample_size`: public helper that resolves the StARS
-  subsample size with the `pulsar::.ratcheck` rule, now used internally and
-  covered by tests.
-- `spieceasi.runtime`: `physical_core_count()` and `default_n_jobs()`, used by the
-  desktop app for the SPIEC-EASI worker count.
-- **Golden fixtures are content-addressed:** `golden_extended/CHECKSUMS.sha256`
-  records the SHA-256 of the *decompressed* content of every fixture, and the
-  large matrices (`solver_adj_path.tsv`, `solver_coef_path.tsv`) are stored
-  gzipped: 56 MB → 2.0 MB and 12.1 MB → 5.0 MB respectively, i.e. the tree goes
-  from **57 MB to 11 MB**. The data is byte-identical — the tests load `.gz`
-  transparently and `tests/test_golden_checksums.py` fails if any content changes.
-- **CI (`.github/workflows/ci.yml`):** a job builds the extension and runs the
-  extension-vs-reference sweep and the `n_jobs` determinism tests plus the fast
-  suite; a second job removes the compiled module and exercises the pure-Python
-  fallback; a cibuildwheel job builds wheels on Linux, macOS Intel, macOS arm64
-  and Windows; a fourth builds the frozen backend with PyInstaller and runs the
-  frozen regression tests.
-- Extended R/Python equivalence golden set (`tests/golden_extended/`, 23 cases)
-  with `tests/test_equivalence_extended.py`.
-- `spiec-easi-python/docs/PERFORMANCE.md` with measured MB-solver timings and known performance
-  limitations.
-
-### Fixed
-
-- **Start-up of the frozen backend: ≈9.2 s of the ≈10 s removed.** About 7.7 s
-  was the pure-Python solver (now the compiled core) and 0.94 s was an eager
-  `from scipy.stats import spearmanr` on a path that never uses it — the import
-  moved into the helper that needs it (`frozen analyze` on the tiny benchmark:
-  10.740 s → 1.504 s). The frozen bundle also packages the compiled core
-  explicitly (`backend.spec` hiddenimports) and a new regression test asserts the
-  packaged app logs `SPIEC-EASI solver: cpp`, i.e. it does not silently fall back
-  to the reference solver.
-
-  *State of the code after this commit only, superseded later:* the fix pinned the
-  frozen build to `prefer="threads"` **with `n_jobs=1`**, while the library still
-  defaulted to the *loky* (process) backend. That pinning no longer exists: since
-  the change listed above under **Changed**, `threads` is the library default for
-  every build and the desktop app uses the physical-core worker count. There is no
-  frozen-specific branch in the code; the test now asserts the real default
-  (threads + physical cores, read from the log) and the equality of the payload
-  with a forced `n_jobs=1` run.
-- **The packaged (PyInstaller) backend crashed on every SPIEC-EASI run.**
-  `stars_select` called `joblib.Parallel(n_jobs=…)` with the default *loky*
-  (process) backend. Inside a frozen executable loky re-executes the binary with
-  `-B`, which the CLI rejected (`unknown command: -B`, exit code 2). The app never
-  sends `spieceasiJobs`, so it always used `min(4, cpu_count)` and therefore
-  always crashed. Fixed by adding an explicit `prefer` argument to the StARS
-  subset loop (`"processes"` by default, so normal installs are unchanged) and by
-  selecting `prefer="threads"` with `n_jobs=1` for frozen builds. `backend.py`
-  additionally calls `multiprocessing.freeze_support()` and reports
-  interpreter-style arguments explicitly instead of the generic
-  "unknown command".
+- References to the deleted library internals (`spieceasi._mb_core`,
+  `spiec-easi-python/docs/AUDIT.md`, `spiec-easi-python/docs/PERFORMANCE.md`,
+  the extension-vs-reference sweep) from `README.md`, `CHANGELOG.md` and
+  `python/backend.spec`.
 
 ### Notes
 
-- No golden file was modified and no comparison tolerance was widened.
+- Equivalence with R is documented in `spiec-easi-python/docs/EQUIVALENCE.md`
+  (what is identical, what is identical within a numerical tolerance, what cannot
+  be); deviations are in `spiec-easi-python/docs/DIFFERENCES.md`.
+- No comparison tolerance was widened to make a test pass.

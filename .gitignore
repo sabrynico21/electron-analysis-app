@@ -16,10 +16,9 @@ python-dist/
 .pyinstaller-venv/
 .pyinstaller-wine/
 
-# Compiled extension build artifacts (built from src/spieceasi/_mb_core.cpp)
-spiec-easi-python/build/
-spiec-easi-python/src/spieceasi/*.so
-spiec-easi-python/src/spieceasi/*.pyd
+# The standalone SPIEC-EASI library is its own git repository (nested, no
+# submodule for now) — the app consumes it as source on sys.path.
+spiec-easi-python/
 *.egg-info/
 
 # Local scratch data / editor state (not part of the project)

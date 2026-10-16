@@ -204,31 +204,27 @@ Linux on x64 only.
   but results can be less stable in very high-dimensional settings; prevalence/abundance
   filtering and taxa grouping are usually recommended.
 
-#### Parameters currently used in this app
+#### Parameters used by this app
 
-Current integration defaults for SPIEC-EASI MB:
+Integration parameters for SPIEC-EASI (MB), forwarded to the standalone
+`spieceasi` library (`spiec-easi-python/`):
 
-- `spieceasiNLambdas`: `20`
-- `spieceasiLambdaMinRatio`: `0.001`
-- `spieceasiNSubsamples`: `20`
-- `spieceasiStarsThreshold`: `0.05`
-- `spieceasiMaxIter`: `10000`
-- `spieceasiJobs`: unset by default. When unset the worker count is the number of
-  **physical** CPU cores (`spieceasi.runtime.default_n_jobs()`; `logical // 2` if
-  the physical count cannot be read, `1` if nothing can be read). Set it to force
-  a value.
-- Parallel backend: **threads** (joblib). The compiled MB core releases the GIL,
-  the subsample results are aggregated in a fixed order, and results are
-  bit-identical for any worker count (verified for `n_jobs = 1…16`).
-- The packaged (frozen) backend uses **these same defaults**: there is no
-  frozen-specific setting in the code. The values actually used are written to
-  the analysis log
-  (`SPIEC-EASI settings: n_jobs=…, parallel_backend=threads, physical_cores=…`),
-  and an explicit `spieceasiJobs` overrides only the worker count.
-- `spieceasiSubsampleFraction`: unset by default. When unset, the StARS subsample
-  fraction follows the R reference (`pulsar::.ratcheck`): `0.8` for `n <= 144`
+- `spieceasiNLambdas`: `20` (R default)
+- `spieceasiLambdaMinRatio`: `0.001` (R default)
+- `spieceasiNSubsamples`: `20` (StARS `rep.num`, R default)
+- `spieceasiStarsThreshold`: `0.05` (R default)
+- `spieceasiSubsampleFraction`: unset by default. When unset the StARS subsample
+  ratio follows the R reference (`pulsar::.ratcheck`): `0.8` for `n <= 144`
   samples, otherwise `10*sqrt(n)/n`. Set it (e.g. `0.8`) to force a value.
-- Fixed pipeline settings: `sym_rule="or"`, `random_state=17`
+- `spieceasiJobs`: worker processes for the StARS subsample loop. Unset → about
+  half the logical CPU count (`os.cpu_count() // 2`). The subsamples are
+  independent and aggregated in a fixed order, so results are identical for any
+  worker count.
+- Fixed settings: `method="mb"`, `sel_criterion="stars"`, `sym="or"`, `seed=17`.
+
+> `spieceasiMaxIter` is no longer used. The port follows R's fixed MB solver
+> iteration limit (`MAX_ITER = 10000`); the previous per-case cap was a deviation
+> from R and has been removed.
 
 Runtime behavior implemented by the app:
 
@@ -236,85 +232,42 @@ Runtime behavior implemented by the app:
 - The run is skipped if fewer than 4 samples or fewer than 2 varying taxa remain.
 - For very small and high-dimensional datasets (`n_samples <= 10` and
   `n_taxa >= 200`), if the user did not explicitly override them, defaults are
-  automatically reduced to keep execution practical:
-  - `spieceasiNLambdas <= 10`
-  - `spieceasiNSubsamples <= 8`
-  - `spieceasiMaxIter <= 3000`
+  reduced to keep execution practical: `spieceasiNLambdas <= 10`,
+  `spieceasiNSubsamples <= 8`.
 
-#### Performance (measured)
+#### Performance
 
-The MB solver is compiled (`spieceasi._mb_core`, a pybind11 translation of
-`huge_core.cpp`); the pure-Python reference stays as the fallback. On the
-development machine (4 physical / 8 logical cores), full pipeline, median of 3:
-
-| case | pure Python | compiled, n_jobs=1 | compiled, n_jobs=4 | R (`spiec.easi`) |
-|------|-------------|--------------------|--------------------|------------------|
-| p=30, n=100 | 97.8 s | 0.52 s | 0.24 s | 2.11 s |
-| p=50, n=50 | 453.4 s | 3.80 s | 1.50 s | 4.45 s |
-| p=100, n=80 | 1565.8 s | 21.6 s | **8.73 s** | 14.04 s |
-
-So with 4 workers the p=100 pipeline is faster than the R reference. The
-compiled core is **not** bit-identical to the pure-Python reference (differences
-at the 1e-13…1e-14 level; identical discovered structure except in a deliberately
-degenerate family), it performs *the same number of coordinate-descent sweeps*
-as `huge`, and the remaining serial gap to R is R's OpenMP parallelism. Details,
-flags and caveats: `spiec-easi-python/docs/PERFORMANCE.md`; packaging: `spiec-easi-python/docs/PACKAGING.md`.
-
-Conditions of that table: Linux x86-64, 4 physical / 8 logical cores, median of 3
-runs, `2026-10-13`; the `n_jobs=1` column is the parallel run forced to one worker
-(serial, after the memory-layout change, the same case is 21.35 s instead of
-22.06 s). The ratio to R at p=100 is therefore quoted as 1.57× (before the layout
-change), 1.52× (serial after it) and 1.54× (one worker of the threaded run): same
-case, same machine, different builds — see `spiec-easi-python/docs/PERFORMANCE.md`.
+The MB solver is a pure-Python port of `huge::mb` (exact coordinate descent);
+there is no compiled extension. Wall-clock cost is dominated by the number of
+`nlambda × rep_num × n_taxa` neighbourhood Lasso fits, and the StARS subsample
+loop is parallelised across `spieceasiJobs` processes. See
+`spiec-easi-python/docs/PACKAGING.md` for freezing notes.
 
 ### Equivalence with R ("Equivalenza con R")
 
-The Python implementation in `spiec-easi-python/` is a translation of the R
-pipeline (SpiecEasi 1.99.0 + huge 2.0.1 + pulsar 0.3.13) and is checked against
-R on generated golden datasets:
+The Python implementation in `spiec-easi-python/` is a faithful translation of
+the R pipeline (SpiecEasi 1.99.0 + huge 2.0.1 + pulsar 0.3.13) and is checked
+against R on committed golden datasets:
 
-- `tests/r_reference/generate_golden.R` and `generate_golden_extended.R` produce
-  17-digit R references; `tests/test_equivalence*.py` compare Python against them
-  step by step (CLR, `lambda.max`, lambda grid, solver path, coefficients, StARS,
-  selection, final adjacency).
+- `spiec-easi-python/tests/r_reference/generate_golden.R` produces 17-digit R
+  references; `spiec-easi-python/tests/test_equivalence.py` compares Python
+  against them step by step (CLR, correlation, `lambda.max`, lambda grid, MB
+  coefficients and edge sets, per-replica adjacency, StARS variability, selected
+  index, refit).
 - R's StARS subsample indices are injected into Python, because the two RNGs are
   not bit-comparable.
 - No comparison tolerance was widened to make a test pass.
 
-Result **on the currently tested cases** (p up to 100, n between 25 and 300,
-dense and sparse data, `p > n`, `n > 144`, both the library and the application
-configuration): every step matches to about `1e-15`–`1e-13`, with one
-numerically indeterminate situation at `lambda = lambda.max` documented in
-`spiec-easi-python/docs/AUDIT.md` §2.E. This is **not** a claim of general equivalence: it holds
-for the tested cases only.
+What is guaranteed identical, identical within a tolerance, and not identical is
+documented in `spiec-easi-python/docs/EQUIVALENCE.md`; deviations from R are in
+`spiec-easi-python/docs/DIFFERENCES.md`.
 
-Known and documented deviations (solver arithmetic, StARS RNG, the application's
-reduced `max_iter` cap in the tiny/high-dimensional regime) are listed in
-`spiec-easi-python/docs/AUDIT.md`. Measured runtimes are in `spiec-easi-python/docs/PERFORMANCE.md`.
+#### Platform scope
 
-#### Platform scope of that verification
-
-The equivalence and bit-identity results above were **measured only on Linux
-x86-64 with GCC** (the development machine: AMD Ryzen 5 3550H, glibc 2.44, GCC
-with the flags listed in `spiec-easi-python/docs/PERFORMANCE.md`; the R reference is R 4.6.1 +
-SpiecEasi 1.99.0 + huge 2.0.1 + pulsar 0.3.13 built on the same machine).
-
-**Windows and macOS (Intel and ARM) are covered by the CI, but they are not
-proven identical** — the claim is limited to the tested platform until those CI
-jobs actually run and pass there. The `equivalence-platforms` job in
-`.github/workflows/ci.yml` builds the extension and runs, on
-`ubuntu-latest` (x86-64/GCC), `macos-13` (Intel), `macos-14` (ARM) and
-`windows-latest` (MSVC):
-
-- the **full extension-vs-pure-Python sweep** (`test_mb_core_equivalence.py -m slow`,
-  244 problems + the extended goldens), and
-- the **R golden suites** (`test_equivalence.py`, `test_equivalence_extended.py`)
-  against R with `huge`/`pulsar`/SpiecEasi installed on the runner.
-
-Different compilers, libm implementations and CPU architectures can change the
-last bits of floating-point results, so an equivalence statement is only as wide
-as the set of platforms that ran the comparison. Until those jobs pass on a
-given platform, treat equivalence and bit-identity as **Linux x86-64 only**.
+The equivalence results were **measured on Linux x86-64 (GCC)** only. Windows
+and macOS are not proven identical until the CI jobs run there. Different
+compilers, libm implementations and BLAS builds can change the last bits of
+floating-point results.
 
 ### Where your results live
 

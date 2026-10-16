@@ -1,5 +1,0 @@
-SpiecEasi=1.99.0
-huge=2.0.1
-pulsar=0.3.13
-glmnet=5.1
-R=4.6.1

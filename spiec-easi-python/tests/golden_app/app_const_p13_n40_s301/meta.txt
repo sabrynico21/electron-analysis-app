@@ -1,9 +1,0 @@
-d=12
-n_lambda=20
-n_sub=20
-p=12
-n=40
-nlambda=20
-lambda_min_ratio=0.001
-rep_num=20
-threshold=0.05

@@ -96,12 +96,13 @@ def main() -> int:
 
     if command.startswith("-"):
         # Not one of our sub-commands: this looks like the interpreter itself
-        # being re-executed by a process pool (joblib/loky passes "-B" as the
-        # first argument). Report it as such instead of "unknown command".
+        # being re-executed by a process pool (multiprocessing passes "-B" or
+        # similar as the first argument when it re-executes the executable).
+        # Report it as such instead of "unknown command".
         print(
             f"{USAGE}\nunexpected interpreter argument: {command}\n"
-            "(a frozen build must not spawn a process pool; the library uses "
-            "joblib with prefer='threads' when frozen)",
+            "(a frozen build should not let a process pool re-execute the "
+            "executable; on POSIX the library uses a fork-based pool)",
             file=sys.stderr,
         )
         return 2

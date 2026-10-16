@@ -1,3 +1,0 @@
-d=10
-n_lambda=25
-n_sub=20
