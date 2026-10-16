@@ -636,7 +636,7 @@ def _compute_spieceasi_for_matrix(
         if not has_user_max_iter:
             # Intentional deviation from R (which always uses MAX_ITER=10000):
             # cap iterations for very high-dimensional, tiny-sample regimes to
-            # bound runtime. Documented in docs/AUDIT.md.
+            # bound runtime. Documented in spiec-easi-python/docs/AUDIT.md.
             max_iter = min(max_iter, 3000)
 
     estimated_model_fits = (n_lambdas * n_subsamples + 1) * n_taxa

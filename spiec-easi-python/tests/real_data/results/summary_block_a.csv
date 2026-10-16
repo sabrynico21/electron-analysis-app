@@ -1,0 +1,16 @@
+case,kind,n_seeds,lambda_equal,net_identical,solver_identical,lambda_internal,cls_identico,cls_equivalente,cls_diverso,wilson_ident_lo,wilson_ident_hi,opt_index_r_counts,note
+R1,real,10,10,10,10,10,10,0,0,0.7225,1.0000,{3: 10},
+R2,real,10,10,10,10,10,10,0,0,0.7225,1.0000,{3: 10},
+R3,real,10,10,10,10,10,10,0,0,0.7225,1.0000,{3: 10},
+R4,real,10,10,10,10,10,10,0,0,0.7225,1.0000,{3: 10},
+R5,real,10,10,10,10,10,10,0,0,0.7225,1.0000,{3: 10},
+L1,limit,10,10,10,10,10,10,0,0,0.7225,1.0000,{3: 10},
+L2,limit,10,10,10,0,10,0,10,0,0.0000,0.2775,{3: 10},solver diverge sul path; rete/lambda uguali
+L4,limit,10,10,10,10,10,10,0,0,0.7225,1.0000,{3: 10},
+S1,synthetic,10,10,10,10,5,10,0,0,0.7225,1.0000,"{1: 5, 2: 5}",lambda.max in 5/10 seed (non vacuo)
+S2,synthetic,10,10,10,10,10,10,0,0,0.7225,1.0000,{2: 10},
+S3,synthetic,10,10,10,10,10,10,0,0,0.7225,1.0000,{5: 10},
+S4,synthetic,10,10,10,10,10,10,0,0,0.7225,1.0000,"{2: 4, 3: 6}",
+P1,pathological,10,10,10,10,10,10,0,0,0.7225,1.0000,{4: 10},
+P2,pathological,10,10,10,10,1,10,0,0,0.7225,1.0000,"{1: 9, 2: 1}",lambda.max in 9/10 seed (non vacuo)
+P3,pathological,10,10,4,10,1,10,0,0,0.7225,1.0000,"{1: 9, 2: 1}",lambda.max in 9/10 seed (non vacuo)

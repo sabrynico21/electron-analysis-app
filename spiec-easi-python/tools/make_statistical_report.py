@@ -132,7 +132,7 @@ def main() -> int:
         ]
     )
 
-    out = REPO / "docs" / "STATISTICAL_EQUIVALENCE.md"
+    out = ROOT / "docs" / "STATISTICAL_EQUIVALENCE.md"
     out.write_text(doc)
     print(f"wrote {out}")
     return 0

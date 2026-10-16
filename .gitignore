@@ -24,8 +24,6 @@ spiec-easi-python/src/spieceasi/*.pyd
 
 # Local scratch data / editor state (not part of the project)
 .vscode/
-/genere_table.txt
-/sample_metadatab.txt
 
 # Stray unused module (superseded by spiec-easi-python/src/spieceasi)
 /python/spieceasi/

@@ -258,14 +258,14 @@ compiled core is **not** bit-identical to the pure-Python reference (differences
 at the 1e-13…1e-14 level; identical discovered structure except in a deliberately
 degenerate family), it performs *the same number of coordinate-descent sweeps*
 as `huge`, and the remaining serial gap to R is R's OpenMP parallelism. Details,
-flags and caveats: `docs/PERFORMANCE.md`; packaging: `docs/PACKAGING.md`.
+flags and caveats: `spiec-easi-python/docs/PERFORMANCE.md`; packaging: `spiec-easi-python/docs/PACKAGING.md`.
 
 Conditions of that table: Linux x86-64, 4 physical / 8 logical cores, median of 3
 runs, `2026-10-13`; the `n_jobs=1` column is the parallel run forced to one worker
 (serial, after the memory-layout change, the same case is 21.35 s instead of
 22.06 s). The ratio to R at p=100 is therefore quoted as 1.57× (before the layout
 change), 1.52× (serial after it) and 1.54× (one worker of the threaded run): same
-case, same machine, different builds — see `docs/PERFORMANCE.md`.
+case, same machine, different builds — see `spiec-easi-python/docs/PERFORMANCE.md`.
 
 ### Equivalence with R ("Equivalenza con R")
 
@@ -285,18 +285,18 @@ Result **on the currently tested cases** (p up to 100, n between 25 and 300,
 dense and sparse data, `p > n`, `n > 144`, both the library and the application
 configuration): every step matches to about `1e-15`–`1e-13`, with one
 numerically indeterminate situation at `lambda = lambda.max` documented in
-`docs/AUDIT.md` §2.E. This is **not** a claim of general equivalence: it holds
+`spiec-easi-python/docs/AUDIT.md` §2.E. This is **not** a claim of general equivalence: it holds
 for the tested cases only.
 
 Known and documented deviations (solver arithmetic, StARS RNG, the application's
 reduced `max_iter` cap in the tiny/high-dimensional regime) are listed in
-`docs/AUDIT.md`. Measured runtimes are in `docs/PERFORMANCE.md`.
+`spiec-easi-python/docs/AUDIT.md`. Measured runtimes are in `spiec-easi-python/docs/PERFORMANCE.md`.
 
 #### Platform scope of that verification
 
 The equivalence and bit-identity results above were **measured only on Linux
 x86-64 with GCC** (the development machine: AMD Ryzen 5 3550H, glibc 2.44, GCC
-with the flags listed in `docs/PERFORMANCE.md`; the R reference is R 4.6.1 +
+with the flags listed in `spiec-easi-python/docs/PERFORMANCE.md`; the R reference is R 4.6.1 +
 SpiecEasi 1.99.0 + huge 2.0.1 + pulsar 0.3.13 built on the same machine).
 
 **Windows and macOS (Intel and ARM) are covered by the CI, but they are not

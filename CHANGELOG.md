@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with GCC**. Windows and macOS are covered by CI but are **not proven
   identical** until those jobs pass there; the claims should be read as
   Linux x86-64 (GCC) only. See the "Platform scope" subsection in `README.md`
-  and §7.7 in `docs/AUDIT.md`.
+  and §7.7 in `spiec-easi-python/docs/AUDIT.md`.
 - **Lint cleanup, no behaviour change.** `ruff` on `python/analysis.py` and
   `spiec-easi-python/tests/test_app_integration.py`: 13 findings → 0 (import
   order, redundant f-strings, an unnecessary `int()` around `round()`, an
@@ -65,7 +65,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   accelerator, not a requirement: `spieceasi.mb_solver_reference` keeps the
   pure-Python solver as the reference implementation and as the automatic
   fallback (a `RuntimeWarning` is emitted when the compiled module cannot be
-  imported). See `docs/AUDIT.md` §7 for the declared deviations.
+  imported). See `spiec-easi-python/docs/AUDIT.md` §7 for the declared deviations.
 
   **Speed-up on the measured cases** (serial, median of 3, full pipeline):
   97.8 s → 0.57 s (`ds2`, p=30), 453.4 s → 3.99 s (p=50), 1565.8 s → 22.06 s
@@ -102,7 +102,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   frozen regression tests.
 - Extended R/Python equivalence golden set (`tests/golden_extended/`, 23 cases)
   with `tests/test_equivalence_extended.py`.
-- `docs/PERFORMANCE.md` with measured MB-solver timings and known performance
+- `spiec-easi-python/docs/PERFORMANCE.md` with measured MB-solver timings and known performance
   limitations.
 
 ### Fixed
