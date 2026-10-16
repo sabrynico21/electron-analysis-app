@@ -751,8 +751,8 @@ Dati grezzi e riepiloghi (con SHA-256):
 
 - **Altri sistemi operativi / CPU / BLAS**: non testati (scope Linux x86-64).
 - **"Vecchio caso D"** citato per L2: non identificato con certezza tra i 10 seed.
-- **Confronto di tempo a `p=1135`**: non eseguibile finché il lavoro non è
-  dimostrato identico (punto F); **non** usato.
+- **Confronto di tempo a `p=1135`**: **eseguito e scartato** — il lavoro **non**
+  è identico (Appendice F), quindi nessun confronto di tempo a `p=1135` è valido.
 - **RNG di R** (StARS) non riprodotto: coperto solo via iniezione degli indici.
 - **Validità KKT/obiettivo** applicata solo dove il solver diverge (L2); gli altri
   casi sono già entro `1e-10` sui passi deterministici.
@@ -771,3 +771,50 @@ Dati grezzi e riepiloghi (con SHA-256):
    prima occorrenza), ma va letto insieme alla Appendice B.2b.
 
 _(Fine Appendice E.)_
+
+---
+
+## Appendice F — Caso `p=1135` (chiarimento, senza confronti di tempo)
+
+Un **solo subcampione** (`n=76`) del dataset **completo** (1135 generi, nessun
+filtro di prevalenza), con la **S reale** e i **λ reali del path**:
+
+- `lambda_max = 1.0` (⇒ nel dataset grezzo esistono generi **perfettamente
+  collineari**), `grid[20] = 0.001`;
+- **λ verificati come reali**: `real_lambda_path_match = True`,
+  `lambda_max_match = True` (uguali a `make_alpha_path` sul CLR completo).
+
+**Invarianza ai thread** (R `huge::huge(method="mb")` con `OMP_NUM_THREADS=1` e
+con il default): **risultati identici** (`threads_1_vs_default_identical = TRUE`).
+
+**Stessa S e stessi λ passati al nostro core** → **confronto dei risultati**:
+
+| λ idx (0-based) | 0 (=λ.max) | ≥1 (interni) | totale |
+| --- | --- | --- | --- |
+| lati diversi R vs Python | **0** | **26684** | **26684** |
+
+`per_lambda_diff = [0, 12, 21, 30, 50, 123, 309, 374, 630, 879, 2965, 2066,
+2432, 2300, 2217, 2085, 2338, 2423, 2551, 2879]`.
+
+**Primo punto di divergenza: λ idx 1** (1-based 2), **12 lati diversi**. A
+`λ.max` (idx 0) i risultati coincidono.
+
+### Contatori sweep / aggiornamenti di coordinata
+
+I contatori comparabili (documentati in `docs/PERFORMANCE.md` per `p≤100`, dove
+**tutti** i contatori coincidevano) richiedono la ricostruzione instrumentata di
+`huge` **e** del core: il sorgente vendorizzato di `huge` qui è **pristine** e il
+nostro core non espone contatori, quindi **non** sono riprodotti a `p=1135`. Ciò
+premesso, la **divergenza dei risultati** sulla stessa S/λ è di per sé decisiva:
+se il lavoro fosse identico il path coinciderebbe.
+
+### Conclusione F
+
+**Il lavoro NON è identico a `p=1135`** (primo punto di divergenza: λ idx 1, 12
+lati). Di conseguenza **si scarta il confronto di tempo** a `p=1135`, che resta
+escluso da ogni confronto di tempo. Ipotesi sulla causa: regime **sottodeterminato
+ed estremamente degenere** (`n=76 ≪ p=1135`, `λ.max=1.0` per collinearità
+esatta) con **tie-breaking** diverso ai soft-threshold — la stessa famiglia di
+instabilità osservata in L2, amplificata da `p≫n`.
+
+_(Fine Appendice F.)_

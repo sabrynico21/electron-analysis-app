@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 HERE = Path(__file__).resolve().parent
 PKG = HERE.parents[1]
@@ -48,12 +49,10 @@ def main() -> int:
     d = S.shape[0]
     n_lambda = grid.size
 
-    counts = lm(HERE / "data" / "genere_table.txt")  # genera x samples (row names dropped)
-    # genere_table has 1135 rows (genera) x 96 cols (samples); transpose to samples x genera
-    if counts.shape[0] == 1135:
-        X_clr = clr_transform(counts.T).clr
-    else:
-        X_clr = clr_transform(counts).clr
+    counts = pd.read_csv(
+        HERE / "data" / "genere_table.txt", sep="\t", index_col=0
+    ).apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    X_clr = clr_transform(counts.to_numpy().T).clr  # samples x genera
 
     # verify the lambda path is the real one
     py_grid = make_alpha_path(X_clr, n_lambdas=n_lambda, lambda_min_ratio=1e-3)
