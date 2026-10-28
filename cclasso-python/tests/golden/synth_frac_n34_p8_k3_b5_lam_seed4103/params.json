@@ -1,1 +1,0 @@
-{"case":"synth_frac_n34_p8_k3_b5_lam_seed4103","dataset":"Synthetic logistic-normal fractions","counts":false,"pseudo":0.5,"k_cv":3,"lam_int":[0.001,0.10000000000000001],"k_max":20,"n_boot":5,"seed":4103,"n":34,"p":8,"structure_adj":true,"source":"deterministic generator in tests/r_reference/generate_golden.R","source_license":"n/a (synthetic)","redistribution_cleared":true}

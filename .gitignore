@@ -16,9 +16,8 @@ python-dist/
 .pyinstaller-venv/
 .pyinstaller-wine/
 
-# The standalone SPIEC-EASI library is its own git repository (nested, no
-# submodule for now) — the app consumes it as source on sys.path.
-spiec-easi-python/
+# The three statistical ports (cclasso-python, spiec-easi-python,
+# spring-python) are standalone git repositories integrated as submodules.
 *.egg-info/
 
 # Local scratch data / editor state (not part of the project)

@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Statistical ports are now git submodules.** `cclasso-python/`,
+  `spiec-easi-python/` and `spring-python/` are standalone git repositories
+  (released independently) integrated as submodules instead of vendored copies
+  / a nested ignored repo. The app pins one commit per port; clone with
+  `git clone --recurse-submodules` (or run `git submodule update --init`).
+  Packaging is unaffected: PyInstaller still freezes the ports into
+  `python-dist`, so releases remain self-contained.
 - **SPIEC-EASI backend replaced.** The standalone Python library in
   `spiec-easi-python/` was rebuilt from scratch as a faithful port of the R
   reference (`SpiecEasi` 1.99.0 + `huge` 2.0.1 + `pulsar` 0.3.13), `method="mb"`

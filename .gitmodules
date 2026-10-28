@@ -1,0 +1,9 @@
+[submodule "cclasso-python"]
+	path = cclasso-python
+	url = ../cclasso-python
+[submodule "spring-python"]
+	path = spring-python
+	url = ../spring-python
+[submodule "spiec-easi-python"]
+	path = spiec-easi-python
+	url = ../spiec-easi-python

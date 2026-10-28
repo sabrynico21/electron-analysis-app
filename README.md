@@ -374,9 +374,9 @@ electron-analysis-app/
 |  |- analysis.py          # per-method correlation pipeline
 |  |- backend.spec         # PyInstaller build description
 |  `- clustering/          # PageRank push + conductance-sweep cluster selection
-|- cclasso-python/         # Python port of R CCLasso 2.0           (verified vs R)
-|- spiec-easi-python/      # Python port of SpiecEasi MB + pulsar   (verified vs R; own nested git repo)
-|- spring-python/          # Python port of the SPRING fork         (verified vs R)
+|- cclasso-python/         # Python port of R CCLasso 2.0           (verified vs R; git submodule)
+|- spiec-easi-python/      # Python port of SpiecEasi MB + pulsar   (verified vs R; git submodule)
+|- spring-python/          # Python port of the SPRING fork         (verified vs R; git submodule)
 |- resources/bin/<platform>/<arch>/   # bundled FastSpar binaries
 |- scripts/                # build, environment-manifest, equivalence tooling
 |- tests/                  # Electron unit + e2e suites
@@ -384,13 +384,32 @@ electron-analysis-app/
 `- package.json
 ```
 
-Each method port is a standalone source package: the engine imports it from its `src/`
-directory and PyInstaller freezes it into the backend (`python/backend.spec`). The
-upstream R reference sources are kept as read-only provenance copies —
-`CCLasso-master/` and `SPRING-master/` at the repository root (git-ignored), and the
-SpiecEasi/huge/pulsar sources vendored in `spiec-easi-python/reference/` — as are the
-generated build directories (`dist/`, `python-dist/`, `.pyinstaller-build/`,
-`.pyinstaller-venv/`, `.pyinstaller-wine/`, `release/`).
+Each method port is a standalone source package **and a standalone git
+repository**, integrated here as a git submodule (`cclasso-python`,
+`spiec-easi-python`, `spring-python`): the app pins one commit of each port,
+while every port keeps its own history, tags and releases. The engine imports
+each port from its `src/` directory and PyInstaller freezes it into the backend
+(`python/backend.spec`), so packaged releases are self-contained regardless of
+the submodule layout. The upstream R reference sources are kept as read-only
+provenance copies — `CCLasso-master/` and `SPRING-master/` at the repository
+root (git-ignored), and the SpiecEasi/huge/pulsar sources vendored in
+`spiec-easi-python/reference/` — as are the generated build directories
+(`dist/`, `python-dist/`, `.pyinstaller-build/`, `.pyinstaller-venv/`,
+`.pyinstaller-wine/`, `release/`).
+
+### Working on a port
+
+```bash
+git submodule update --init            # first clone, or after git pull
+cd spiec-easi-python                   # work on the port in its own repo
+git checkout -b my-fix && ... && git commit
+cd .. && git add spiec-easi-python     # advance the pinned commit in the app
+git commit -m "spiec-easi-python: <what changed>"
+```
+
+Each port lives at `github.com/sabrynico21/<port>` and is released
+independently; the submodule URLs in `.gitmodules` are relative, so they
+resolve against wherever the app repository is cloned from.
 
 ### Statistical method ports and R equivalence
 
@@ -419,12 +438,15 @@ generated build directories (`dist/`, `python-dist/`, `.pyinstaller-build/`,
 ### Local development
 
 ```bash
-git clone https://github.com/sabrynico21/electron-analysis-app.git
+git clone --recurse-submodules https://github.com/sabrynico21/electron-analysis-app.git
 cd electron-analysis-app
 npm install
 python3 -m venv .venv && .venv/bin/pip install -r python/requirements.txt
 npm run dev
 ```
+
+(If you cloned without `--recurse-submodules`, run
+`git submodule update --init` before building.)
 
 `npm run dev` runs the engine from source through the system interpreter; the three
 ports are picked up from their `src/` directories automatically.
