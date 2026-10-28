@@ -3,6 +3,8 @@ import styles from './ParametersForm.module.css'
 export default function ParametersForm({ values, onChange, availableDatasets, conditionOptions, conditionColumns = [], disabled = false }) {
   const handleChange = (key, value) => onChange((prev) => ({ ...prev, [key]: value }))
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
+  const method = values.correlationMethod ?? 'spearman'
+  const hasPairwisePValues = ['spearman', 'sparcc', 'cclasso'].includes(method)
 
   const datasetOptions = [
     { value: 'bacteria', label: 'Only bacteria', enabled: availableDatasets.bacteria },
@@ -31,31 +33,25 @@ export default function ParametersForm({ values, onChange, availableDatasets, co
         <label htmlFor="correlationMethod">Correlation method</label>
         <select
           id="correlationMethod"
-          value={values.correlationMethod ?? 'spearman'}
+          value={method}
           disabled={disabled}
           onChange={(e) => handleChange('correlationMethod', e.target.value)}
         >
           <option value="spearman">Spearman</option>
           <option value="sparcc">SparCC</option>
+          <option value="cclasso">CCLasso</option>
           <option value="spieceasi">SPIEC-EASI (MB)</option>
+          <option value="spring">SPRING</option>
         </select>
+
+        {!hasPairwisePValues && (
+          <small className={styles.range}>
+            This network method selects edges with StARS; it does not produce pairwise p-values.
+          </small>
+        )}
       </div>
 
-      <div className={styles.field}>
-        <label htmlFor="groupingMode">Taxa grouping</label>
-        <select
-          id="groupingMode"
-          value={values.groupingMode ?? 'all'}
-          disabled={disabled}
-          onChange={(e) => handleChange('groupingMode', e.target.value)}
-        >
-          <option value="all">All taxa (no grouping)</option>
-          <option value="phylum">Group by phylum (p_)</option>
-          <option value="genus">Group by genus (g_)</option>
-        </select>
-      </div>
-
-      <div className={styles.field}>
+      {hasPairwisePValues && <div className={styles.field}>
         <label htmlFor="pValueThreshold">
           P-value threshold <span className={styles.range}>(0.0 - 1.0)</span>
         </label>
@@ -86,7 +82,7 @@ export default function ParametersForm({ values, onChange, availableDatasets, co
             handleChange('pValueThreshold', normalized)
           }}
         />
-      </div>
+      </div>}
 
       <div className={styles.field}>
         <label htmlFor="conditionColumn">Condition column</label>
@@ -135,7 +131,10 @@ export default function ParametersForm({ values, onChange, availableDatasets, co
 
       <div className={styles.field}>
         <label htmlFor="correlationThreshold">
-          Correlation filter · min |r| <span className={styles.range}>(0.0 - 1.0)</span>
+          {method === 'spieceasi'
+            ? 'StARS edge stability · minimum'
+            : 'Correlation filter · min |r|'}
+          <span className={styles.range}>(0.0 - 1.0)</span>
         </label>
         <input
           id="correlationThreshold"
@@ -165,7 +164,9 @@ export default function ParametersForm({ values, onChange, availableDatasets, co
           }}
         />
         <small className={styles.range}>
-          Keeps only edges with |correlation| ≥ threshold.
+          {method === 'spieceasi'
+            ? 'SPIEC-EASI weights edges by StARS selection frequency, so this keeps edges with stability ≥ threshold.'
+            : 'Keeps edges with absolute association weight ≥ threshold.'}
         </small>
       </div>
     </form>

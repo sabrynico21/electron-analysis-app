@@ -124,14 +124,37 @@
 	flex-direction: column;
 }
 
-.clusterControlsSection {
+.taxaFilteringSection {
 	grid-column: 2;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+/* Full-width run bar placed between the two configuration columns and the
+   downstream steps, with the Start button centred. */
+.runBar {
+	grid-column: 1 / -1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.5rem;
+	text-align: center;
+}
+
+.runBar > .warning,
+.runBar > .error,
+.runBar > .resultsHint,
+.runBar > div {
+	width: 100%;
+	text-align: left;
 }
 
 .clusterControlsSection {
 	display: grid;
 	grid-template-rows: auto 1fr;
 	min-height: 0;
+	grid-column: 1 / -1;
 }
 
 .panelBody {
@@ -154,15 +177,6 @@
 
 .resultsSection {
 	grid-column: 1 / -1;
-}
-
-.runInline {
-	display: flex;
-	flex-direction: column;
-	flex: 1;
-	margin-top: 1rem;
-	padding-top: 1rem;
-	border-top: 1px solid var(--color-border);
 }
 
 .clusterRunButton {
@@ -233,10 +247,6 @@
 	cursor: not-allowed;
 }
 
-.runButtonBottom {
-	margin-top: auto;
-}
-
 .error {
 	color: var(--color-danger);
 	margin-top: 0.5rem;
@@ -250,6 +260,8 @@
 
 	.uploadSection,
 	.parametersSection,
+	.taxaFilteringSection,
+	.runBar,
 	.clusterControlsSection,
 	.resultsSection {
 		grid-column: 1;

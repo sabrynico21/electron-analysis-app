@@ -80,9 +80,17 @@ export function buildDerivedSubgraphs(firstSubgraph = {}, secondSubgraph = {}) {
     const secondEdge = secondEdgeMap.get(key)
     const weightA = Number(firstEdge.weight) || 0
     const weightB = Number(secondEdge.weight) || 0
-    const signA = edgeSign(weightA)
-    const signB = edgeSign(weightB)
-    const signConflict = signA !== signB
+    const weightTypeA = firstEdge.weight_type || 'correlation'
+    const weightTypeB = secondEdge.weight_type || 'correlation'
+    const metricMismatch = weightTypeA !== weightTypeB
+    const weightType = metricMismatch ? 'mixed' : weightTypeA
+    const signA = metricMismatch
+      ? 'not comparable'
+      : weightType === 'selection_stability' ? 'selected' : edgeSign(weightA)
+    const signB = metricMismatch
+      ? 'not comparable'
+      : weightType === 'selection_stability' ? 'selected' : edgeSign(weightB)
+    const signConflict = !metricMismatch && weightType !== 'selection_stability' && signA !== signB
     // Which way the sign flips, so the plot can give each direction its own
     // colour: positive→negative vs negative→positive.
     const conflictType = signConflict
@@ -97,8 +105,13 @@ export function buildDerivedSubgraphs(firstSubgraph = {}, secondSubgraph = {}) {
       weight: signConflict ? magnitudeSource : weightA,
       weightA,
       weightB,
-      pValueA: Number(firstEdge.p_value),
-      pValueB: Number(secondEdge.p_value),
+      pValueA: firstEdge.p_value ?? null,
+      pValueB: secondEdge.p_value ?? null,
+      weight_type: weightType,
+      weight_type_a: weightTypeA,
+      weight_type_b: weightTypeB,
+      metricMismatch,
+      evidence_type: firstEdge.evidence_type || secondEdge.evidence_type || 'pairwise_p_value',
       signA,
       signB,
       signConflict,

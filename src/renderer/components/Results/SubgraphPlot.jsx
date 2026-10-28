@@ -345,7 +345,9 @@ export default function SubgraphPlot({
                 x2={target.x}
                 y2={target.y}
                 strokeWidth={weight}
-                className={`${styles.edge} ${signClass(numericWeight)}`}
+                className={`${styles.edge} ${edge.metricMismatch || edge.weight_type === 'selection_stability'
+                  ? styles.edgeNeutral
+                  : signClass(numericWeight)}`}
               />
             )
           })}

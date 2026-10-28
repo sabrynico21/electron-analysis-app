@@ -1,0 +1,47 @@
+{
+  "blas_lapack": {
+    "blas": {
+      "found": true,
+      "name": "scipy-openblas",
+      "openblas configuration": "OpenBLAS 0.3.34.106.0  USE64BITINT DYNAMIC_ARCH NO_AFFINITY Haswell MAX_THREADS=64",
+      "version": "0.3.34.106.0"
+    },
+    "lapack": {
+      "found": true,
+      "name": "scipy-openblas",
+      "openblas configuration": "OpenBLAS 0.3.34.106.0  USE64BITINT DYNAMIC_ARCH NO_AFFINITY Haswell MAX_THREADS=64",
+      "version": "0.3.34.106.0"
+    }
+  },
+  "component": "spring",
+  "git": {
+    "revision": "813aa21b79881ba03d3b110b07a9f5bac315aac5",
+    "tracked_worktree_dirty": true
+  },
+  "packages": {
+    "networkx": null,
+    "numpy": "2.5.4",
+    "pytest": "9.1.1",
+    "scikit-learn": null,
+    "scipy": "1.18.1",
+    "threadpoolctl": null
+  },
+  "platform": {
+    "machine": "x86_64",
+    "platform": "Linux-6.18.53-1-lts-x86_64-with-glibc2.44",
+    "release": "6.18.53-1-lts",
+    "system": "Linux"
+  },
+  "python": {
+    "implementation": "CPython",
+    "version": "3.14.7 (main, Aug 10 2026, 07:46:56) [GCC 16.1.1 20260728]"
+  },
+  "thread_environment": {
+    "MKL_NUM_THREADS": null,
+    "NUMEXPR_NUM_THREADS": null,
+    "OMP_NUM_THREADS": null,
+    "OPENBLAS_NUM_THREADS": null,
+    "VECLIB_MAXIMUM_THREADS": null
+  },
+  "threadpools": null
+}

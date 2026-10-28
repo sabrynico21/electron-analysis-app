@@ -1,0 +1,16 @@
+{
+  "seed": 20261019,
+  "cases": 1000,
+  "python_status_counts": {
+    "finite": 525,
+    "nonfinite": 394,
+    "error": 81
+  },
+  "r_status_counts": {
+    "finite": 525,
+    "nonfinite": 394,
+    "error": 81
+  },
+  "mismatch_count": 0,
+  "mismatches_preview": []
+}

@@ -1,0 +1,1 @@
+{"case":"synth_counts_n36_p8_k4_b7_lam_seed4104","dataset":"Synthetic logistic-normal fractions","counts":true,"pseudo":0.5,"k_cv":4,"lam_int":[1.0000000000000001e-05,1],"k_max":20,"n_boot":7,"seed":4104,"n":36,"p":8,"structure_adj":true,"source":"deterministic generator in tests/r_reference/generate_golden.R","source_license":"n/a (synthetic)","redistribution_cleared":true}

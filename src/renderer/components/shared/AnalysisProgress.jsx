@@ -11,6 +11,25 @@ const isUsefulLog = (line = '') => {
   return true
 }
 
+// A line only counts as an error when it is an actual failure. Matching the bare
+// substring "error" was wrong: benign diagnostics such as CCLasso's
+// "Maximum Iteration: 200 && Relative error: 0.0003" were painted red.
+const ERROR_PATTERN = new RegExp(
+  [
+    '^\\[?error\\]?\\s*[:\\-]', // "[ERROR] ..." / "error: ..."
+    '^\\[error\\]',
+    '\\btraceback \\(most recent call last\\)',
+    '\\bunhandled exception\\b',
+    '\\bfatal\\b',
+    '\\bfailed\\b',
+    '\\bcrashed?\\b',
+    '\\baborted\\b',
+  ].join('|'),
+  'i'
+)
+
+const WARN_PATTERN = /\bwarn(ing)?\b|\bsolver note\b/i
+
 const toReadableLog = (entry = {}) => {
   const raw = String(entry.line || '').trim()
   const cleaned = raw
@@ -21,10 +40,9 @@ const toReadableLog = (entry = {}) => {
     .replace(/^error\s*:\s*/i, '')
     .trim()
 
-  const lowered = cleaned.toLowerCase()
   let level = entry.level || 'info'
-  if (lowered.includes('error') || lowered.includes('failed') || lowered.includes('traceback')) level = 'error'
-  else if (lowered.includes('warning') || lowered.includes('warn')) level = 'warn'
+  if (entry.level === 'error' || ERROR_PATTERN.test(cleaned)) level = 'error'
+  else if (entry.level === 'warn' || WARN_PATTERN.test(cleaned)) level = 'warn'
 
   return { level, line: cleaned }
 }

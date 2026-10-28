@@ -37,6 +37,26 @@ const formatNegativeToPositiveRatio = (edges = []) => {
   return (negative / positive).toFixed(2)
 }
 
+const formatMeanWeight = (edges = []) => {
+  if (!edges.length) return '0.0000'
+  const mean = edges.reduce((total, edge) => total + (Number(edge?.weight) || 0), 0) / edges.length
+  return mean.toFixed(4)
+}
+
+/**
+ * Conductance φ(S) measured on the extracted cluster (clustering metadata).
+ * The backend serialises the undefined-conductance fallback (seed singleton)
+ * as null, so null / non-finite values are shown as ∞; while no cluster is
+ * available yet the box stays empty.
+ */
+const formatClusterConductance = (runStatus, conductance) => {
+  if (runStatus !== 'done') return '-'
+  if (conductance == null) return '∞'
+  const value = Number(conductance)
+  if (!Number.isFinite(value)) return '∞'
+  return value.toFixed(4)
+}
+
 export default function ChartPanel({
   graphRefs = [],
   conditionGraphs = {},
@@ -91,6 +111,9 @@ export default function ChartPanel({
         const payload = conditionGraphs[ref.cacheKey]
         const graph = payload?.graph
         const stats = graph?.stats
+        const weightType = stats?.weight_type || graph?.edges?.[0]?.weight_type || 'correlation'
+        const isStabilityWeight = weightType === 'selection_stability'
+        const methodDiagnostics = stats?.method_diagnostics || {}
         const sampleCount = stats?.condition_samples_after_dataset_filter
           ?? stats?.condition_samples_in_metadata
           ?? null
@@ -109,7 +132,9 @@ export default function ChartPanel({
         const maxNodes = Object.prototype.hasOwnProperty.call(maxNodesByGraph, ref.cacheKey)
           ? maxNodesByGraph[ref.cacheKey]
           : defaultMaxNodes
-        const clusterParams = clusterParamsByGraph[ref.cacheKey] || { conductance: 0.2, b: 1, teleport: 0 }
+        // Transient display fallback until AnalysisWorkspace seeds the real
+        // per-graph defaults (reference values: phi=0.4, b=10, alpha=0.05).
+        const clusterParams = clusterParamsByGraph[ref.cacheKey] || { conductance: 0.4, b: 10, teleport: 0.05 }
 
         return (
           <div key={ref.cacheKey} className={styles.regionCard}>
@@ -125,6 +150,20 @@ export default function ChartPanel({
               <>
                 <section className={styles.metricSection}>
                   <h4 className={styles.metricTitle}>Graph Statistics</h4>
+                  {stats?.evidence_type === 'stars' && (
+                    <p className={styles.infoText}>
+                      Edges are selected by StARS model stability; pairwise p-values are not produced.
+                    </p>
+                  )}
+                  {(methodDiagnostics.selected_lambda != null || methodDiagnostics.lambda != null) && (
+                    <p className={styles.infoText}>
+                      Selected λ: {Number(methodDiagnostics.selected_lambda ?? methodDiagnostics.lambda).toPrecision(4)}
+                      {methodDiagnostics.opt_index != null ? ` · StARS index ${methodDiagnostics.opt_index}` : ''}
+                      {methodDiagnostics.admm_iteration_cap_count > 0
+                        ? ` · ${methodDiagnostics.admm_iteration_cap_count} CCLasso ADMM calls hit the iteration cap`
+                        : ''}
+                    </p>
+                  )}
                   <div className={`${styles.propsGrid} ${styles.propsGridRatio}`}>
                     <div className={styles.propBox}>
                       <span>Graph nodes</span>
@@ -135,8 +174,10 @@ export default function ChartPanel({
                       <strong>{stats?.edge_count ?? graph.edges.length}</strong>
                     </div>
                     <div className={styles.propBox}>
-                      <span>N/P ratio</span>
-                      <strong>{formatNegativeToPositiveRatio(graph.edges)}</strong>
+                      <span>{isStabilityWeight ? 'Mean StARS stability' : 'N/P ratio'}</span>
+                      <strong>{isStabilityWeight
+                        ? formatMeanWeight(graph.edges)
+                        : formatNegativeToPositiveRatio(graph.edges)}</strong>
                     </div>
                     <div className={styles.propBox}>
                       <span>Taxa in graph</span>
@@ -175,8 +216,8 @@ export default function ChartPanel({
                         <strong>{formatNegativeToPositiveRatio(subgraphEdges)}</strong>
                       </div>
                       <div className={styles.propBox}>
-                        <span>Result status</span>
-                        <strong>{runStatus === 'done' ? 'Ready' : 'Waiting'}</strong>
+                        <span>Conductance</span>
+                        <strong>{formatClusterConductance(runStatus, recluster?.metadata?.conductance)}</strong>
                       </div>
                     </div>
                     {useExclusive && runStatus === 'done' && subgraphNodes.length === 0 && (
@@ -294,7 +335,8 @@ export default function ChartPanel({
                             }}
                             onBlur={(event) => {
                               const parsed = Number(event.target.value)
-                              const normalized = Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0.2
+                              // Invalid input resets to the reference default.
+                              const normalized = Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0.4
                               onClusterParamsChange(ref.cacheKey, { conductance: normalized })
                             }}
                           />
@@ -356,7 +398,8 @@ export default function ChartPanel({
                             onBlur={() => {
                               const parsed = Number(clusterParams.teleport)
                               if (!Number.isFinite(parsed)) {
-                                onClusterParamsChange(ref.cacheKey, { teleport: 0 })
+                                // Invalid input resets to the reference default.
+                                onClusterParamsChange(ref.cacheKey, { teleport: 0.05 })
                                 return
                               }
                               const normalized = Number(Math.max(0, Math.min(1, parsed)).toFixed(6))
@@ -382,14 +425,14 @@ export default function ChartPanel({
                   <div className={styles.exportTables}>
                     <ExportableTable
                       title={`Full condition graph · ${ref.condition}`}
-                      description='Every edge of the condition graph with its correlation value.'
+                      description='Every edge with its method-specific weight, weight type, and available p-value evidence.'
                       rows={conditionEdgeRows(graph, ref.condition)}
                       fileName={`${safeFileName(ref.condition)}_full_graph_edges.csv`}
                       testId={`export-full-graph-${graphIndex}`}
                     />
                     <ExportableTable
                       title={`Cluster · ${ref.condition}`}
-                      description='Edges of the cluster subgraph, with the correlation value of each edge.'
+                      description='Edges of the cluster subgraph, with method-specific edge weights and available p-value evidence.'
                       rows={clusterEdgeRows(subgraph, ref.condition)}
                       fileName={`${seedTaxaSlug ? `${seedTaxaSlug}_` : ''}${safeFileName(ref.condition)}_cluster_edges.csv`}
                       testId={`export-cluster-${graphIndex}`}

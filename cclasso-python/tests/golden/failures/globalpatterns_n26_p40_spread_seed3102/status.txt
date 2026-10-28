@@ -1,0 +1,2 @@
+R_status=error
+R_error=valore mancante dove è richiesto TRUE/FALSE

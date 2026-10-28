@@ -171,12 +171,16 @@ describe('history archive and comparison view', () => {
       return {
         nameDisabled: name.disabled,
         methodDisabled: method.disabled,
+        methodOptions: [...method.options].map((option) => option.value),
         hasRerun: Boolean(rerun) && !rerun.disabled,
         hasSave: [...document.querySelectorAll('button')].some((button) => /save changes/i.test(button.textContent)),
       }
     `)
     assert.equal(editable.nameDisabled, false)
     assert.equal(editable.methodDisabled, false)
+    for (const method of ['cclasso', 'spieceasi', 'spring']) {
+      assert.ok(editable.methodOptions.includes(method), `${method} should be available in the method selector`)
+    }
     assert.equal(editable.hasRerun, true)
     assert.equal(editable.hasSave, true)
   })

@@ -15,13 +15,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import FileUploadZone from '../FileUpload/FileUploadZone'
 import ParametersForm from '../Parameters/ParametersForm'
+import TaxaFilteringForm from '../Parameters/TaxaFilteringForm'
 import AnalysisProgress from '../shared/AnalysisProgress'
 import ChartPanel from '../Results/ChartPanel'
 import SeedSelector from '../Results/SeedSelector'
 import { useAnalysis } from '../../hooks/useAnalysis'
 import { useAnalysisStore } from '../../store/analysisStore'
 import { useResultsStore } from '../../store/resultsStore'
-import { dedupeDescriptors, describePaths, parseMetadataColumns, parseMetadataConditions, toPathList, METADATA_CONDITION_COLUMN } from '../../utils/fileLoading'
+import { dedupeDescriptors, describePaths, parseMetadataColumns, parseMetadataConditions, countMetadataSamples, toPathList, METADATA_CONDITION_COLUMN } from '../../utils/fileLoading'
+import { DEFAULT_TAXA_FILTERING, isTaxaFilteringValid, normalizeTaxaFiltering } from '../../utils/taxaFiltering'
 import styles from '../../styles/AnalysisPage.module.css'
 
 const DEFAULT_PARAMS = {
@@ -30,36 +32,42 @@ const DEFAULT_PARAMS = {
   pValueThreshold: 0.05,
   correlationThreshold: 0,
   conditionColumn: METADATA_CONDITION_COLUMN,
+  taxaFiltering: DEFAULT_TAXA_FILTERING,
 }
+const METHODS_WITH_P_VALUES = new Set(['spearman', 'sparcc', 'cclasso'])
 
+// Reference defaults of the clustering algorithm: the parameter set of the
+// published tuning experiments (phi = 0.4, b = 10, alpha = 0.05 on both
+// bundled networks).  Keep in sync with
+// python/clustering/clustering_profiles.py.
+const DEFAULT_CONDUCTANCE = 0.4
+const DEFAULT_TELEPORT_ALPHA = 0.05
+const DEFAULT_TARGET_CLUSTER_FRACTION = 0.1
 const TELEPORT_MIN = 0
 
 function computeDefaultB(nodeCount, edgeCount) {
   const n = Math.max(1, Number(nodeCount) || 1)
   const m = Math.max(1, Number(edgeCount) || 1)
 
-  const bMax = Math.max(1, Math.ceil(Math.log2(Math.max(m, 1))))
-  const bMin = Math.max(1, Math.floor(Math.log2(Math.sqrt(Math.max(n, 1)))))
-  const avgDegree = (2 * m) / n
+  // Target a cluster of ~10% of the taxa (clamped to [10, n/3]), turn that
+  // size into a target volume with the average degree, and return the scale
+  // b of the paper's volume window.  10 on both bundled networks.
+  const averageDegree = (2 * m) / n
+  const targetSize = Math.max(
+    10,
+    Math.min(Math.max(Math.floor(n / 3), 10), Math.round(DEFAULT_TARGET_CLUSTER_FRACTION * n)),
+  )
+  const targetVolume = Math.max(2, averageDegree * targetSize)
 
-  let bDefault
-  if (avgDegree < 10) {
-    bDefault = Math.max(bMin, Math.floor(Math.log2(Math.max(n / 10, 1))))
-  } else if (avgDegree > 50) {
-    bDefault = Math.max(bMin, Math.floor(Math.log2(Math.max(n / 3, 1))))
-  } else {
-    bDefault = Math.max(bMin, Math.floor(Math.log2(Math.max(Math.sqrt(n), 1))))
-  }
-
-  return Math.min(bDefault, bMax)
+  const bMax = Math.max(1, Math.floor(Math.log2(Math.max(2 * m, 2))))
+  return Math.max(1, Math.min(bMax, Math.round(Math.log2(targetVolume))))
 }
 
-function computeDefaultTeleportAlpha(targetConductance, edgeCount) {
-  const phi = Number(targetConductance)
-  const m = Math.max(1, Number(edgeCount) || 1)
-  const denominator = 225 * Math.log(100 * Math.sqrt(m))
-  if (!Number.isFinite(phi) || denominator <= 0) return TELEPORT_MIN
-  return normalizeTeleport((phi * phi) / denominator)
+function computeDefaultTeleportAlpha(/* targetConductance, edgeCount */) {
+  // A constant, independent of phi: the paper's phi^2 / (225 ln(100 sqrt(m)))
+  // is a worst-case bound (~2e-5), not an operating point; the experiments
+  // select 0.05.  Parameters kept for symmetry with the python port.
+  return DEFAULT_TELEPORT_ALPHA
 }
 
 function normalizeTeleport(value) {
@@ -102,6 +110,7 @@ export default function AnalysisWorkspace({
   const [runStatusByGraph, setRunStatusByGraph] = useState({})
   const [isClusteringRunning, setIsClusteringRunning] = useState(false)
   const [clusterParamsByGraph, setClusterParamsByGraph] = useState({})
+  const [totalSamples, setTotalSamples] = useState(0)
 
   const { runAnalysis, resetRun, status, progress, logs, error } = useAnalysis()
   const updateHistoryEntry = useAnalysisStore((state) => state.updateHistoryEntry)
@@ -187,6 +196,7 @@ export default function AnalysisWorkspace({
       setFungiFiles(fungi.accepted)
       setFungiMetadataFiles(fungiMeta.accepted)
       setParams({ ...DEFAULT_PARAMS, ...(snapshot.params || {}) })
+      setParams((prev) => ({ ...prev, taxaFiltering: normalizeTaxaFiltering(prev.taxaFiltering) }))
       hydratedRef.current = true
       setIsBootstrapping(false)
 
@@ -278,6 +288,34 @@ export default function AnalysisWorkspace({
     }
     // Re-derive when the metadata files or the chosen condition column change.
   }, [metadataPathsKey, params.conditionColumn])
+
+  /**
+   * Total sample count for the taxa-filtering prevalence read-out.
+   *
+   * The authoritative, per-domain counts are the samples present in each
+   * domain's abundance table, computed by the Python pipeline at run time. This
+   * is only a best-effort UI estimate derived from the metadata files so the
+   * user can see roughly what a prevalence percentage translates to.
+   */
+  useEffect(() => {
+    let cancelled = false
+    const count = async () => {
+      const paths = [
+        ...bacteriaMetadataFiles.map((file) => file.path),
+        ...fungiMetadataFiles.map((file) => file.path),
+      ]
+      if (paths.length === 0) {
+        if (!cancelled) setTotalSamples(0)
+        return
+      }
+      const distinct = await countMetadataSamples(paths)
+      if (!cancelled) setTotalSamples(distinct)
+    }
+    count()
+    return () => {
+      cancelled = true
+    }
+  }, [metadataPathsKey, bacteriaMetadataFiles, fungiMetadataFiles])
 
   useEffect(() => {
     const check = async () => {
@@ -451,9 +489,12 @@ export default function AnalysisWorkspace({
     && !!params.datasetType
     && !!params.correlationMethod
     && !!params.groupingMode
-    && Number.isFinite(Number(params.pValueThreshold))
-    && Number(params.pValueThreshold) >= 0
-    && Number(params.pValueThreshold) <= 1
+    && (!METHODS_WITH_P_VALUES.has(params.correlationMethod)
+      || (
+        Number.isFinite(Number(params.pValueThreshold))
+        && Number(params.pValueThreshold) >= 0
+        && Number(params.pValueThreshold) <= 1
+      ))
     && Number.isFinite(Number(params.correlationThreshold))
     && Number(params.correlationThreshold) >= 0
     && Number(params.correlationThreshold) <= 1
@@ -461,6 +502,7 @@ export default function AnalysisWorkspace({
     && !!params.conditionA
     && !!params.conditionB
     && params.conditionA !== params.conditionB
+    && isTaxaFilteringValid(params.taxaFiltering)
     && status !== 'running'
     && !isInteractionLocked
 
@@ -475,7 +517,7 @@ export default function AnalysisWorkspace({
         const stats = payload?.graph?.stats
         const nodeCount = stats?.node_count ?? payload?.graph?.nodes?.length ?? 1
         const edgeCount = stats?.edge_count ?? payload?.graph?.edges?.length ?? 1
-        const defaultConductance = 0.2
+        const defaultConductance = DEFAULT_CONDUCTANCE
         const prevParams = (next || prev)[ref.cacheKey]
         const hasGraphShapeChanged =
           !prevParams
@@ -536,20 +578,29 @@ export default function AnalysisWorkspace({
         continue
       }
 
+      const graphParams = clusterParamsByGraph[ref.cacheKey]
+      const conductanceValue = graphParams?.conductance
+      const bValue = graphParams?.b
+      const teleportValue = graphParams?.teleport
+      // An empty input ('') must stay "unset": Number('') is 0 in JS, and
+      // sending phi=0 / alpha=0 would collapse every ladder step and leave
+      // only the singleton.  null lets the backend apply its defaults.
       const response = await reclusterConditionGraph({
         cacheKey: ref.cacheKey,
         seedNode: taxaNode,
         options: {
           weighted: true,
-          targetConductance: Number.isFinite(Number(clusterParamsByGraph[ref.cacheKey]?.conductance))
-            ? Number(clusterParamsByGraph[ref.cacheKey]?.conductance)
-            : 0.2,
-          b: Number.isFinite(Number(clusterParamsByGraph[ref.cacheKey]?.b))
-            ? Number(clusterParamsByGraph[ref.cacheKey]?.b)
-            : 1,
-          teleportAlpha: Number.isFinite(Number(clusterParamsByGraph[ref.cacheKey]?.teleport))
-            ? normalizeTeleport(clusterParamsByGraph[ref.cacheKey]?.teleport)
-            : normalizeTeleport(0),
+          targetConductance:
+            conductanceValue !== '' && Number.isFinite(Number(conductanceValue))
+              ? Number(conductanceValue)
+              : DEFAULT_CONDUCTANCE,
+          b: bValue !== '' && Number.isFinite(Number(bValue))
+            ? Number(bValue)
+            : null,
+          teleportAlpha:
+            teleportValue !== '' && Number.isFinite(Number(teleportValue))
+              ? normalizeTeleport(teleportValue)
+              : null,
         },
       })
 
@@ -600,9 +651,9 @@ export default function AnalysisWorkspace({
       ...prev,
       [cacheKey]: {
         ...(prev[cacheKey] || {
-          conductance: 0.2,
+          conductance: DEFAULT_CONDUCTANCE,
           b: computeDefaultB(nodeCount, edgeCount),
-          teleport: computeDefaultTeleportAlpha(0.2, edgeCount),
+          teleport: computeDefaultTeleportAlpha(DEFAULT_CONDUCTANCE, edgeCount),
         }),
         ...sanitized,
         _defaultsAuto: false,
@@ -629,19 +680,26 @@ export default function AnalysisWorkspace({
 
     setRunStatusByGraph((prev) => ({ ...prev, [cacheKey]: 'running' }))
 
-    const graphParams = clusterParamsByGraph[cacheKey] || { conductance: 0.2, b: 1, teleport: 0 }
+    const graphParams = clusterParamsByGraph[cacheKey] || { conductance: DEFAULT_CONDUCTANCE, b: null, teleport: null }
+    // Same guard as runSubgraphsForConditions: '' means "use the backend
+    // defaults", never 0 (Number('') is 0 in JS).
+    const conductanceValue = graphParams.conductance
+    const bValue = graphParams.b
+    const teleportValue = graphParams.teleport
     const response = await reclusterConditionGraph({
       cacheKey,
       seedNode: taxaNode,
       options: {
         weighted: true,
-        targetConductance: Number.isFinite(Number(graphParams.conductance))
-          ? Number(graphParams.conductance)
-          : 0.2,
-        b: Number.isFinite(Number(graphParams.b)) ? Number(graphParams.b) : 1,
-        teleportAlpha: Number.isFinite(Number(graphParams.teleport))
-          ? normalizeTeleport(graphParams.teleport)
-          : normalizeTeleport(0),
+        targetConductance:
+          conductanceValue !== '' && Number.isFinite(Number(conductanceValue))
+            ? Number(conductanceValue)
+            : DEFAULT_CONDUCTANCE,
+        b: bValue !== '' && Number.isFinite(Number(bValue)) ? Number(bValue) : null,
+        teleportAlpha:
+          teleportValue !== '' && Number.isFinite(Number(teleportValue))
+            ? normalizeTeleport(teleportValue)
+            : null,
       },
     })
 
@@ -779,31 +837,42 @@ export default function AnalysisWorkspace({
             conditionColumns={metadataColumns}
             disabled={isInteractionLocked}
           />
-          <div className={styles.runInline}>
-            {status === 'running' && <AnalysisProgress progress={progress} logs={logs} />}
-            {error && <p className={styles.error}>{error}</p>}
-            {params.correlationMethod === 'sparcc' && isCheckingSparcc && (
-              <p className={styles.resultsHint}>Checking SparCC runtime...</p>
-            )}
-            {params.correlationMethod === 'sparcc' && !isCheckingSparcc && !sparccStatus?.available && (
-              <p className={styles.warning}>
-                FastSpar is not available for {sparccStatus?.platform || 'this platform'}
-                {sparccStatus?.arch ? `/${sparccStatus.arch}` : ''}. The analysis will run with{' '}
-                <strong>Spearman correlation</strong> instead of SparCC, and the substitution is
-                recorded in the log. Configure FastSpar in Settings to use SparCC.
-              </p>
-            )}
-            {!hasInputData && (
-              <p className={styles.resultsHint}>Add at least one abundance file to enable the analysis.</p>
-            )}
-            <button className={`${styles.runButton} ${styles.runButtonBottom}`} onClick={handleRun} disabled={!canRun}>
-              {status === 'running' ? 'Running…' : isHistory ? 'Re-run analysis' : 'Start Analysis'}
-            </button>
-          </div>
         </section>
 
+        <section className={`${styles.section} ${styles.taxaFilteringSection}`}>
+          <h2>3 · Taxa Filtering</h2>
+          <TaxaFilteringForm
+            values={params}
+            onChange={setParams}
+            totalSamples={totalSamples}
+            disabled={isInteractionLocked}
+          />
+        </section>
+
+        <div className={`${styles.section} ${styles.runBar}`}>
+          {status === 'running' && <AnalysisProgress progress={progress} logs={logs} />}
+          {error && <p className={styles.error}>{error}</p>}
+          {params.correlationMethod === 'sparcc' && isCheckingSparcc && (
+            <p className={styles.resultsHint}>Checking SparCC runtime...</p>
+          )}
+          {params.correlationMethod === 'sparcc' && !isCheckingSparcc && !sparccStatus?.available && (
+            <p className={styles.warning}>
+              FastSpar is not available for {sparccStatus?.platform || 'this platform'}
+              {sparccStatus?.arch ? `/${sparccStatus.arch}` : ''}. The analysis will run with{' '}
+              <strong>Spearman correlation</strong> instead of SparCC, and the substitution is
+              recorded in the log. Configure FastSpar in Settings to use SparCC.
+            </p>
+          )}
+          {!hasInputData && (
+            <p className={styles.resultsHint}>Add at least one abundance file to enable the analysis.</p>
+          )}
+          <button className={styles.runButton} onClick={handleRun} disabled={!canRun}>
+            {status === 'running' ? 'Running…' : isHistory ? 'Re-run analysis' : 'Start Analysis'}
+          </button>
+        </div>
+
         <section className={`${styles.section} ${styles.clusterControlsSection}`}>
-          <h2>3 · Taxa Selection</h2>
+          <h2>4 · Taxa Selection</h2>
           <div className={styles.panelBody}>
             {taxaSectionReady ? (
               <div className={styles.clusterContent}>
@@ -832,14 +901,14 @@ export default function AnalysisWorkspace({
 
         {analysisJobId && isResultsLoading && (
           <section className={`${styles.section} ${styles.resultsSection}`}>
-            <h2>4 · Cluster Results</h2>
+            <h2>5 · Cluster Results</h2>
             <p className={styles.resultsHint}>Loading results…</p>
           </section>
         )}
 
         {hasInlineResults && !isResultsLoading && (
           <section className={`${styles.section} ${styles.resultsSection}`}>
-            <h2>4 · Cluster Results</h2>
+            <h2>5 · Cluster Results</h2>
             <ChartPanel
               graphRefs={graphRefs}
               conditionGraphs={conditionGraphs}

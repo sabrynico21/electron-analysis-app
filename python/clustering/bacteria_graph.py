@@ -3,12 +3,12 @@
 The new dataset expresses weighted relationships between bacteria species.
 Each row of the input text file is expected to follow the schema::
 
-    row_id    source_name    target_name    correlation    p_value
+    row_id    source_name    target_name    association_weight    p_value
 
-Values can be separated via spaces or tabs. During ingestion we keep the
-original correlation (possibly negative) and derive a non-negative weight
-based on its absolute value. This makes the graph compatible with the
-PageRank Nibble routine that assumes positive transition probabilities.
+Values can be separated via spaces or tabs. Pairwise-correlation methods supply
+a p-value; StARS network methods leave it empty. During ingestion we keep the
+signed association weight and derive a non-negative transition weight from its
+absolute value for PageRank Nibble.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class EdgeRecord:
     source: str
     target: str
     correlation: float
-    p_value: float
+    p_value: Optional[float]
 
 
 class BacteriaGraph:
@@ -74,12 +74,13 @@ class BacteriaGraph:
             if not source or not target:
                 continue
             correlation = edge.get("correlation", edge.get("weight", 0.0))
+            p_raw = edge.get("p_value")
             graph.add_edge(
                 row_id=str(edge.get("row_id", "")),
                 source=source,
                 target=target,
                 correlation=float(correlation),
-                p_value=float(edge.get("p_value", 0.0)),
+                p_value=(float(p_raw) if p_raw is not None else None),
                 use_abs_weight=True,
             )
         return graph
@@ -113,11 +114,11 @@ class BacteriaGraph:
                     )
                 row_id, source, target, corr_raw, p_raw = parts[:5]
                 correlation = float(corr_raw)
-                p_value = float(p_raw)
+                p_value = float(p_raw) if p_raw.strip() else None
 
                 if abs(correlation) < min_corr:
                     continue
-                if max_p_value is not None and p_value > max_p_value:
+                if max_p_value is not None and (p_value is None or p_value > max_p_value):
                     continue
                 self.add_edge(
                     row_id=row_id,
@@ -135,7 +136,7 @@ class BacteriaGraph:
         source: str,
         target: str,
         correlation: float,
-        p_value: float,
+        p_value: Optional[float],
         use_abs_weight: bool = True,
     ) -> None:
         weight = abs(correlation) if use_abs_weight else correlation
@@ -230,5 +231,8 @@ class BacteriaGraph:
                     source=u,
                     target=v,
                     correlation=float(data.get("correlation", 0.0)),
-                    p_value=float(data.get("p_value", 0.0)),
+                    p_value=(
+                        float(data["p_value"])
+                        if data.get("p_value") is not None else None
+                    ),
                 )

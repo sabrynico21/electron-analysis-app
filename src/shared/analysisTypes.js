@@ -29,7 +29,9 @@
  * @property {string} source
  * @property {string} target
  * @property {number} weight
- * @property {number} p_value
+ * @property {string} weight_type - correlation, latent_correlation, or selection_stability
+ * @property {number|null} p_value - null for network methods without pairwise p-values
+ * @property {string} evidence_type - pairwise/bootstrap/permutation p-value or StARS selection
  * @property {string} method
  *
  * @typedef {Object} ConditionGraph

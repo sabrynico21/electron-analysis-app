@@ -26,3 +26,9 @@ spiec-easi-python/
 
 # Stray unused module (superseded by spiec-easi-python/src/spieceasi)
 /python/spieceasi/
+
+# Upstream reference R sources (read-only copies kept for provenance checks;
+# the ports are validated against them, but they are not part of the project).
+CCLasso-master/
+SPRING-master/
+SpiecEasi-master/

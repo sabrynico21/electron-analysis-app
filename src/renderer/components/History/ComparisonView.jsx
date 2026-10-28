@@ -384,6 +384,10 @@ function GraphPanel({ side, kind, title, views, emptyMessage, conflictLabels = n
 function ComparisonColumn({ side, entry, bundle, onOpen }) {
   const tintClass = side === 'A' ? styles.tintA : styles.tintB
   const params = entry?.payloadSnapshot?.params || {}
+  const pValueThresholdApplied = bundle.results?.summary?.p_value_threshold_applied
+  const visibleParams = pValueThresholdApplied === false
+    ? Object.fromEntries(Object.entries(params).filter(([key]) => key !== 'pValueThreshold'))
+    : params
   // The summary repeats the analysed conditions, the method and the thresholds
   // already shown under "Parameters": drop those copies here.
   const summary = summaryWithoutDuplicates(bundle.results?.summary || entry?.summary || {})
@@ -472,7 +476,7 @@ function ComparisonColumn({ side, entry, bundle, onOpen }) {
 
       <section className={styles.block}>
         <h3 className={styles.blockTitle}>Parameters</h3>
-        <KeyValueList object={params} labels={PARAM_LABELS} />
+          <KeyValueList object={visibleParams} labels={PARAM_LABELS} />
       </section>
 
       <section className={styles.block}>

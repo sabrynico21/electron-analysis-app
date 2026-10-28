@@ -8,6 +8,7 @@
  */
 
 const round = (value, digits = 6) => {
+  if (value === null || value === undefined) return ''
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return ''
   return Number(numeric.toFixed(digits))
@@ -19,6 +20,12 @@ export const signLabel = (weight) => {
   if (numeric < 0) return 'negative'
   return 'neutral'
 }
+
+const weightColumn = (edge) => (
+  edge?.weight_type === 'selection_stability'
+    ? 'selection_stability'
+    : edge?.weight_type === 'mixed' ? 'weight' : 'correlation'
+)
 
 /** RFC-4180 CSV serialization with a union of all row keys as header. */
 export function toCsv(rows) {
@@ -41,9 +48,11 @@ export function conditionEdgeRows(graph, condition) {
     condition,
     source: edge.source,
     target: edge.target,
-    correlation: round(edge.weight),
-    sign: signLabel(edge.weight),
+    [weightColumn(edge)]: round(edge.weight),
+    weight_type: edge.weight_type || 'correlation',
+    sign: edge.weight_type === 'selection_stability' ? 'selected' : signLabel(edge.weight),
     p_value: round(edge.p_value),
+    evidence_type: edge.evidence_type || 'pairwise_p_value',
     method: edge.method || '',
   }))
 }
@@ -54,9 +63,11 @@ export function clusterEdgeRows(subgraph, condition) {
     condition,
     source: edge.source,
     target: edge.target,
-    correlation: round(edge.weight),
-    sign: signLabel(edge.weight),
+    [weightColumn(edge)]: round(edge.weight),
+    weight_type: edge.weight_type || 'correlation',
+    sign: edge.weight_type === 'selection_stability' ? 'selected' : signLabel(edge.weight),
     p_value: round(edge.p_value),
+    evidence_type: edge.evidence_type || 'pairwise_p_value',
   }))
 }
 
@@ -66,9 +77,11 @@ export function derivedEdgeRows(edges, condition) {
     condition,
     source: edge.source,
     target: edge.target,
-    correlation: round(edge.weight),
-    sign: signLabel(edge.weight),
+    [weightColumn(edge)]: round(edge.weight),
+    weight_type: edge.weight_type || 'correlation',
+    sign: edge.weight_type === 'selection_stability' ? 'selected' : signLabel(edge.weight),
     p_value: round(edge.p_value),
+    evidence_type: edge.evidence_type || 'pairwise_p_value',
   }))
 }
 
@@ -78,7 +91,9 @@ export function derivedEdgeRows(edges, condition) {
  */
 export function intersectionEdgeRows(intersectionEdges, labelA, labelB) {
   return (intersectionEdges || []).map((edge) => {
-    const relation = !edge.signConflict
+    const relation = edge.metricMismatch
+      ? `different metrics (${edge.weight_type_a} vs ${edge.weight_type_b})`
+      : !edge.signConflict
       ? 'same sign'
       : edge.conflictType === 'neg_to_pos'
         ? `negative in ${labelA} → positive in ${labelB}`
@@ -86,10 +101,10 @@ export function intersectionEdgeRows(intersectionEdges, labelA, labelB) {
     return {
       source: edge.source,
       target: edge.target,
-      [`correlation_${labelA}`]: round(edge.weightA),
+      [`${weightColumn(edge)}_${labelA}`]: round(edge.weightA),
       [`sign_${labelA}`]: edge.signA,
       [`p_value_${labelA}`]: round(edge.pValueA),
-      [`correlation_${labelB}`]: round(edge.weightB),
+      [`${weightColumn(edge)}_${labelB}`]: round(edge.weightB),
       [`sign_${labelB}`]: edge.signB,
       [`p_value_${labelB}`]: round(edge.pValueB),
       relation,

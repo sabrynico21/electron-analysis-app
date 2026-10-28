@@ -24,16 +24,22 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 
-# SPIEC-EASI lives in the standalone library (spiec-easi-python/src) so the app
-# and the library share a single source. When this script is run directly (in
-# development the desktop app spawns `python analysis.py`), make it importable.
-_SPIEC_EASI_SRC = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    'spiec-easi-python',
-    'src',
-)
-if os.path.isdir(_SPIEC_EASI_SRC) and _SPIEC_EASI_SRC not in sys.path:
-    sys.path.insert(0, _SPIEC_EASI_SRC)
+# Keep the statistical ports as standalone source packages and import them from
+# their development/package locations. PyInstaller builds include these paths
+# and their hidden imports in backend.spec.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _PORT_SOURCE in (
+    os.path.join(_REPO_ROOT, 'cclasso-python', 'src'),
+    os.path.join(_REPO_ROOT, 'spiec-easi-python', 'src'),
+    os.path.join(_REPO_ROOT, 'spring-python', 'src'),
+):
+    if os.path.isdir(_PORT_SOURCE) and _PORT_SOURCE not in sys.path:
+        sys.path.insert(0, _PORT_SOURCE)
+
+P_VALUE_METHODS = {'spearman', 'sparcc', 'cclasso'}
+NETWORK_METHODS = {'spieceasi', 'spring'}
+CORRELATION_METHODS = P_VALUE_METHODS | NETWORK_METHODS
+MATRIX_METHODS = {'sparcc', 'cclasso'} | NETWORK_METHODS
 
 def report_progress(pct: int):
     print(json.dumps({"progress": pct}), flush=True)
@@ -44,6 +50,52 @@ def log(msg: str):
 
 def _slug(value: str) -> str:
     return ''.join(ch.lower() if ch.isalnum() else '_' for ch in value).strip('_') or 'condition'
+
+
+def _method_settings(method: str, params: dict) -> dict:
+    """Return the effective model settings for result provenance."""
+    if method == 'cclasso':
+        # CCLasso is fed the same abundance table as every other method, so the
+        # count -> compositional closure (0.5 pseudo-count) is always applied.
+        return {
+            'counts': True,
+            'pseudo_count': float(params.get('cclassoPseudo', 0.5)),
+            'k_cv': int(params.get('cclassoFolds', 3)),
+            'n_boot': int(params.get('cclassoBootstraps', 20)),
+            'seed': int(params.get('cclassoSeed', 17)),
+        }
+    if method == 'spieceasi':
+        return {
+            'method': 'mb',
+            'selection': 'stars',
+            'nlambda': int(params.get('spieceasiNLambdas', 20) or 20),
+            'lambda_min_ratio': float(params.get('spieceasiLambdaMinRatio', 1e-3) or 1e-3),
+            'rep_num': int(params.get('spieceasiNSubsamples', 20) or 20),
+            'stars_threshold': float(params.get('spieceasiStarsThreshold', 0.05) or 0.05),
+            'subsample_fraction': params.get('spieceasiSubsampleFraction'),
+            'seed': 17,
+        }
+    if method == 'spring':
+        # SPRING receives the same abundance table as every other method and
+        # applies its own compositional transform (MCLR) internally.
+        return {
+            'method': 'mb',
+            'quantitative': False,
+            'lambda_path': 'data-specific',
+            'lambda_min_ratio': float(params.get('springLambdaMinRatio', 1e-2)),
+            'nlambda': int(params.get('springNLambdas', 20) or 20),
+            'rep_num': int(params.get('springNSubsamples', 20) or 20),
+            'stars_threshold': float(params.get('springStarsThreshold', 0.1)),
+            'subsample_fraction': float(params.get('springSubsampleFraction', 0.8)),
+            'seed': int(params.get('springSeed', 17)),
+            'Rmethod': str(params.get('springRmethod', 'approx')),
+            'use_nearPD': bool(params.get('springUseNearPD', True)),
+            'nu': float(params.get('springNu', 0.001)),
+            'ratio': float(params.get('springRatio', 0.9)),
+        }
+    if method == 'sparcc':
+        return {'permutations': int(params.get('sparccPermutations', 100) or 100)}
+    return {'method': 'spearman'}
 
 
 def _detect_delimiter(header_line: str) -> str:
@@ -206,6 +258,184 @@ def _compute_spearman(x_values: list, y_values: list) -> tuple[float, float]:
     return float(corr), float(p_value)
 
 
+def _record_method_drop(
+    drop_events: list | None,
+    method: str,
+    scope: str,
+    kind: str,
+    items: list,
+    samples_in_scope: int,
+) -> None:
+    """Record a removal performed by a correlation method itself.
+
+    The user filters (prevalence / mean relative abundance / variability) run
+    first and are fully reported; the backends then still discard taxa that are
+    constant inside the analysed sample subset (and SPRING discards all-zero
+    samples). That removal used to exist only as a log line, which made the
+    reported ``before``/``after`` counts disagree with the number of taxa the
+    model actually saw. Events collected here are attached to the
+    ``taxa_filtering`` report of the results payload.
+
+    ``kind`` is ``'constant_feature'`` (items are taxa) or ``'empty_sample'``
+    (items are sample ids); ``scope`` names the condition/matrix that was fitted
+    (e.g. ``'bacteria · control'``, ``'bac+fun · treated'``).
+    """
+    if drop_events is None or not items:
+        return
+    preview = list(items[:50])
+    drop_events.append({
+        'method': method,
+        'scope': scope,
+        'kind': kind,
+        'item_kind': 'taxa' if kind == 'constant_feature' else 'samples',
+        'count': len(items),
+        'items': preview,
+        'items_truncated': len(items) > len(preview),
+        'samples_in_scope': int(samples_in_scope),
+    })
+
+
+def _matrix_for_samples(
+    matrix_by_sample: dict,
+    features: list,
+    sample_ids: list,
+    drop_events: list | None = None,
+    method: str = '',
+    scope: str = '',
+) -> tuple[list[str], np.ndarray]:
+    """Return a finite samples × features matrix with constant taxa removed."""
+    usable_samples = [sample_id for sample_id in sample_ids if sample_id in matrix_by_sample]
+    varying_features, dropped = _filter_constant_features(
+        features, usable_samples, matrix_by_sample
+    )
+    if dropped:
+        log(
+            f"  Removed {len(dropped)} constant feature(s) before model fitting "
+            f"(zero variance / all-zero across samples)."
+        )
+        _record_method_drop(
+            drop_events, method, scope, 'constant_feature', dropped, len(usable_samples)
+        )
+    matrix = np.asarray(
+        [
+            [float(matrix_by_sample[sample_id].get(feature, 0.0)) for feature in varying_features]
+            for sample_id in usable_samples
+        ],
+        dtype=float,
+    )
+    if matrix.size and not np.isfinite(matrix).all():
+        raise ValueError('The selected abundance matrix contains non-finite values.')
+    return varying_features, matrix
+
+
+def _compute_cclasso_for_matrix(
+    matrix_by_sample: dict,
+    features: list,
+    sample_ids: list,
+    params: dict,
+    progress_range: tuple[float, float] | None = None,
+    drop_events: list | None = None,
+    scope_label: str = '',
+) -> tuple[dict, dict, dict]:
+    """Infer composition-aware correlations and bootstrap p-values with CCLasso."""
+    from cclasso import cclasso
+
+    start_pct, end_pct = (progress_range or (0.0, 0.0))
+
+    def _progress(fraction: float) -> None:
+        if progress_range is not None:
+            report_progress(round(start_pct + (end_pct - start_pct) * min(1.0, max(0.0, fraction))))
+
+    usable_samples = [sample_id for sample_id in sample_ids if sample_id in matrix_by_sample]
+    varying_features, X = _matrix_for_samples(
+        matrix_by_sample, features, usable_samples, drop_events, 'cclasso', scope_label
+    )
+    if len(usable_samples) < 6 or len(varying_features) < 2:
+        raise ValueError(
+            'CCLasso needs at least 6 samples and 2 non-constant taxa '
+            f'(got n={len(usable_samples)}, p={len(varying_features)}).'
+        )
+    if np.any(X < 0):
+        raise ValueError('CCLasso requires non-negative abundance values.')
+
+    # Same input as every other correlation method: the abundance table as loaded.
+    # CCLasso's own model turns it into compositions (pseudo-count + row closure).
+    counts = True
+    pseudo = float(params.get('cclassoPseudo', 0.5))
+    k_cv = int(params.get('cclassoFolds', 3))
+    n_boot = int(params.get('cclassoBootstraps', 20))
+    seed = int(params.get('cclassoSeed', 17))
+
+    _progress(0.05)
+    log(
+        f"Running CCLasso: {len(usable_samples)} samples × {len(varying_features)} taxa "
+        f"(counts={counts}, k_cv={k_cv}, n_boot={n_boot})"
+    )
+    try:
+        with warnings.catch_warnings(record=True) as solver_warnings:
+            warnings.simplefilter('always')
+            result = cclasso(
+                X,
+                counts=counts,
+                pseudo=pseudo,
+                k_cv=k_cv,
+                n_boot=n_boot,
+                seed=seed,
+            )
+    except Exception as exc:
+        raise RuntimeError(f'CCLasso correlation inference failed: {exc}') from exc
+
+    # Solver warnings (ADMM iteration cap, lambda near boundary, numpy numerics)
+    # are captured instead of being dumped to stderr as raw RuntimeWarning text,
+    # which the log viewer would misclassify. They stay reported, as warnings.
+    for item in solver_warnings:
+        message = ' '.join(str(item.message).split())
+        log(f'  CCLasso solver note: {message}')
+    _progress(1.0)
+
+    correlations = result['cor_w']
+    p_values = result['p_vals']
+    corr_matrix = {feature: {} for feature in varying_features}
+    pval_matrix = {feature: {} for feature in varying_features}
+    finite_pairs = 0
+    for i, left in enumerate(varying_features):
+        for j in range(i + 1, len(varying_features)):
+            right = varying_features[j]
+            corr = float(correlations[i, j])
+            p_value = float(p_values[i, j])
+            if not (math.isfinite(corr) and math.isfinite(p_value)):
+                continue
+            corr_matrix[left][right] = corr
+            corr_matrix[right][left] = corr
+            pval_matrix[left][right] = p_value
+            pval_matrix[right][left] = p_value
+            finite_pairs += 1
+
+    diagnostics = {
+        'weight_type': 'correlation',
+        'evidence_type': 'bootstrap_p_value',
+        'lambda': float(result['lambda']),
+        'n_samples': len(usable_samples),
+        'n_taxa': len(varying_features),
+        'finite_pair_count': finite_pairs,
+        'nonfinite_pair_count': (len(varying_features) * (len(varying_features) - 1) // 2) - finite_pairs,
+        'admm_iteration_cap_count': int(
+            np.count_nonzero(np.asarray(result.get('_admm_iters', [])) >= 200)
+        ),
+    }
+    log(
+        f"  CCLasso selected lambda={diagnostics['lambda']:.6g}; "
+        f"finite pair estimates={finite_pairs}; "
+        f"ADMM calls at 200-iteration cap={diagnostics['admm_iteration_cap_count']}"
+    )
+    if diagnostics['nonfinite_pair_count']:
+        log(
+            f"  WARNING: CCLasso returned non-finite estimates for "
+            f"{diagnostics['nonfinite_pair_count']} pair(s); those pairs are omitted."
+        )
+    return corr_matrix, pval_matrix, diagnostics
+
+
 def _write_counts_tsv(path: str, samples: list[str], features: list[str], matrix_by_sample: dict) -> None:
     # FastSpar requires the classic BIOM TSV format: the first header cell must be
     # '#OTU ID', each row is an OTU (feature) and each column is a sample.
@@ -356,6 +586,8 @@ def _compute_sparcc_for_matrix(
     sample_ids: list,
     params: dict,
     progress_range: tuple[float, float] | None = None,
+    drop_events: list | None = None,
+    scope_label: str = '',
 ) -> tuple[dict, dict]:
     start_pct, end_pct = (progress_range or (0.0, 0.0))
 
@@ -381,6 +613,9 @@ def _compute_sparcc_for_matrix(
             f"  Removed {len(dropped)} constant feature(s) before FastSpar "
             f"(zero variance / only one unique permutation): {preview}"
         )
+    _record_method_drop(
+        drop_events, 'sparcc', scope_label, 'constant_feature', dropped, len(usable_samples)
+    )
     if len(features) < 2:
         log("  Fewer than 2 varying features remain; skipping SparCC matrix")
         return {}, {}
@@ -529,6 +764,8 @@ def _compute_spieceasi_for_matrix(
     params: dict,
     progress_range: tuple[float, float] | None = None,
     subsamples: list | None = None,
+    drop_events: list | None = None,
+    scope_label: str = '',
 ) -> tuple[dict, dict, dict]:
     """Compute SPIEC-EASI MB weights and expose them as correlation-like pairs.
 
@@ -564,6 +801,9 @@ def _compute_spieceasi_for_matrix(
             f"  Removed {len(dropped)} constant feature(s) before SPIEC-EASI "
             f"(zero variance / all-zero across samples): {preview}"
         )
+    _record_method_drop(
+        drop_events, 'spieceasi', scope_label, 'constant_feature', dropped, len(usable_samples)
+    )
     if len(features) < 2:
         log("  Fewer than 2 varying features remain; skipping SPIEC-EASI matrix")
         return {}, {}, {"selected_lambda": math.nan, "edge_count": 0}
@@ -667,13 +907,14 @@ def _compute_spieceasi_for_matrix(
         for j in range(i + 1, len(features)):
             right = features[j]
             is_edge = int(adjacency[i, j]) != 0
-            if is_edge:
-                correlation = float(edge_stability[i, j])
-                p_value = 0.0
-                edge_count += 1
-            else:
-                correlation = 0.0
-                p_value = 1.0
+            if not is_edge:
+                continue
+            # StARS selects network edges; it does not calculate pairwise
+            # hypothesis-test p-values. Preserve its actual edge-frequency score
+            # and leave p-value absent rather than fabricating 0/1 values.
+            correlation = float(edge_stability[i, j])
+            p_value = None
+            edge_count += 1
             corr_matrix[left][right] = correlation
             corr_matrix[right][left] = correlation
             pval_matrix[left][right] = p_value
@@ -684,7 +925,16 @@ def _compute_spieceasi_for_matrix(
         'edge_count': edge_count,
         'n_samples': int(X.shape[0]),
         'n_taxa': int(X.shape[1]),
+        'mean_edge_stability': (
+            float(np.mean(edge_stability[adjacency != 0])) if edge_count else 0.0
+        ),
+        'weight_type': 'selection_stability',
+        'evidence_type': 'stars',
     }
+    log(
+        f"  SPIEC-EASI selected lambda={selected_lambda:.6g} with {edge_count} "
+        f"StARS-selected edges"
+    )
     return corr_matrix, pval_matrix, diagnostics
 
 
@@ -693,7 +943,7 @@ def _get_pair_stat(
     pval_matrix: dict,
     left: str,
     right: str,
-) -> tuple[float, float]:
+) -> tuple[float, float | None]:
     corr = corr_matrix.get(left, {}).get(right)
     if corr is None:
         corr = corr_matrix.get(right, {}).get(left)
@@ -702,12 +952,195 @@ def _get_pair_stat(
         pval = pval_matrix.get(right, {}).get(left)
 
     if corr is None:
-        return math.nan, math.nan
+        return math.nan, None
 
-    if pval is None:
-        pval = 1.0
+    return float(corr), (None if pval is None else float(pval))
 
-    return float(corr), float(pval)
+
+def _compute_spring_for_matrix(
+    matrix_by_sample: dict,
+    features: list,
+    sample_ids: list,
+    params: dict,
+    progress_range: tuple[float, float] | None = None,
+    drop_events: list | None = None,
+    scope_label: str = '',
+) -> tuple[dict, dict, dict]:
+    """Run SPRING/StARS and return selected edges weighted by latent correlation.
+
+    SPRING is a network selector, not a pairwise significance test. Only its
+    StARS-selected edges are returned, their weights are the signed latent
+    correlations, and their p-values remain ``None``.
+    """
+    from spring_microbiome import spring as spring_fit
+    from spring_microbiome.latentcor import latentcor
+    from spring_microbiome.mclr import mclr
+
+    start_pct, end_pct = progress_range or (0.0, 0.0)
+
+    def _progress(fraction: float) -> None:
+        if progress_range is not None:
+            report_progress(round(start_pct + (end_pct - start_pct) * min(1.0, max(0.0, fraction))))
+
+    usable_samples = [sample_id for sample_id in sample_ids if sample_id in matrix_by_sample]
+    varying_features, X = _matrix_for_samples(
+        matrix_by_sample, features, usable_samples, drop_events, 'spring', scope_label
+    )
+    if np.any(X < 0):
+        raise ValueError('SPRING requires non-negative abundance values.')
+    nonzero_rows = X.sum(axis=1) > 0
+    if not np.all(nonzero_rows):
+        removed_samples = [
+            sample for sample, keep in zip(usable_samples, nonzero_rows) if not keep
+        ]
+        log(f"  Removed {len(removed_samples)} all-zero sample(s) before SPRING.")
+        _record_method_drop(
+            drop_events, 'spring', scope_label, 'empty_sample',
+            removed_samples, len(usable_samples),
+        )
+        X = X[nonzero_rows]
+        usable_samples = [sample for sample, keep in zip(usable_samples, nonzero_rows) if keep]
+        # Dropping samples can make further taxa constant: record that too.
+        varying_features, X = _matrix_for_samples(
+            matrix_by_sample, varying_features, usable_samples,
+            drop_events, 'spring', scope_label,
+        )
+    if len(usable_samples) < 6 or len(varying_features) < 2:
+        raise ValueError(
+            'SPRING needs at least 6 samples and 2 non-constant taxa '
+            f'(got n={len(usable_samples)}, p={len(varying_features)}).'
+        )
+
+    # Same input as every other correlation method: the abundance table as loaded.
+    # SPRING's compositional model (MCLR) is applied internally by the port.
+    quantitative = False
+    qdat = mclr(X)
+    n_lambdas = int(params.get('springNLambdas', 20) or 20)
+    n_subsamples = int(params.get('springNSubsamples', 20) or 20)
+    stars_threshold = float(params.get('springStarsThreshold', 0.1))
+    lambda_min_ratio = float(params.get('springLambdaMinRatio', 1e-2))
+    seed = int(params.get('springSeed', 17))
+    subsample_ratio = float(params.get('springSubsampleFraction', 0.8))
+    r_method = str(params.get('springRmethod', 'approx'))
+    r_tol = float(params.get('springRtol', 1e-6))
+    use_near_pd = bool(params.get('springUseNearPD', True))
+    nu = float(params.get('springNu', 0.001))
+    bridge_ratio = float(params.get('springRatio', 0.9))
+
+    _progress(0.05)
+    log(
+        f"Running SPRING: {len(usable_samples)} samples × {len(varying_features)} taxa "
+        f"(compositional MCLR, {n_lambdas} lambdas, {n_subsamples} StARS subsamples)"
+    )
+
+    def _on_progress(done: int, total: int) -> None:
+        _progress(0.05 + 0.75 * (done / max(1, total)))
+        log(f"  SPRING StARS progress: {done}/{total} subsamples")
+
+    try:
+        result = spring_fit(
+            X,
+            quantitative=quantitative,
+            lambda_min_ratio=lambda_min_ratio,
+            lambdaseq='data-specific',
+            nlambda=n_lambdas,
+            seed=seed,
+            thresh=stars_threshold,
+            subsample_ratio=subsample_ratio,
+            rep_num=n_subsamples,
+            Rtol=r_tol,
+            Rmethod=r_method,
+            use_nearPD=use_near_pd,
+            nu=nu,
+            ratio=bridge_ratio,
+            verbose=False,
+            validate_input=True,
+        )
+    except Exception as exc:
+        raise RuntimeError(f'SPRING latentcor + MB/StARS failed: {exc}') from exc
+
+    _progress(0.85)
+    # The Python SpringResult exposes the selected adjacency and StARS merge
+    # frequencies, but not the full latent-correlation matrix. Recompute that
+    # deterministic transform with identical parameters for signed graph weights.
+    try:
+        latent = latentcor(
+            qdat,
+            types='tru',
+            method=r_method,
+            use_nearPD=use_near_pd,
+            nu=nu,
+            tol=r_tol,
+            ratio=bridge_ratio,
+        ).R
+    except Exception as exc:
+        raise RuntimeError(f'SPRING latent-correlation weight calculation failed: {exc}') from exc
+
+    opt_index = int(result.output.stars.opt_index) - 1
+    adjacency = np.asarray(result.adjacency)
+    stability = np.asarray(result.output.stars.merge[opt_index], dtype=float)
+    corr_matrix = {feature: {} for feature in varying_features}
+    pval_matrix = {feature: {} for feature in varying_features}
+    edge_count = 0
+    for i, left in enumerate(varying_features):
+        for j in range(i + 1, len(varying_features)):
+            if int(adjacency[i, j]) == 0:
+                continue
+            right = varying_features[j]
+            weight = float(latent[i, j])
+            corr_matrix[left][right] = weight
+            corr_matrix[right][left] = weight
+            # The absent p-value is intentional: StARS selection is not a
+            # pairwise hypothesis test.
+            pval_matrix[left][right] = None
+            pval_matrix[right][left] = None
+            edge_count += 1
+
+    _progress(1.0)
+    diagnostics = {
+        'selected_lambda': float(result.lambdaseq[opt_index]),
+        'opt_index': int(result.output.stars.opt_index),
+        'edge_count': edge_count,
+        'n_samples': len(usable_samples),
+        'n_taxa': len(varying_features),
+        'mean_edge_stability': (
+            float(np.mean([stability[i, j] for i in range(len(varying_features))
+                           for j in range(i + 1, len(varying_features))
+                           if int(adjacency[i, j]) != 0]))
+            if edge_count else 0.0
+        ),
+        'weight_type': 'latent_correlation',
+        'evidence_type': 'stars',
+    }
+    log(
+        f"  SPRING selected lambda={diagnostics['selected_lambda']:.6g} "
+        f"(index {diagnostics['opt_index']}) with {edge_count} StARS-selected edges; "
+        f"mean edge stability={diagnostics['mean_edge_stability']:.4f}"
+    )
+    return corr_matrix, pval_matrix, diagnostics
+
+
+def _compute_network_for_matrix(
+    method: str,
+    matrix_by_sample: dict,
+    features: list,
+    sample_ids: list,
+    params: dict,
+    progress_range: tuple[float, float] | None = None,
+    drop_events: list | None = None,
+    scope_label: str = '',
+) -> tuple[dict, dict, dict]:
+    if method == 'spieceasi':
+        return _compute_spieceasi_for_matrix(
+            matrix_by_sample, features, sample_ids, params, progress_range,
+            drop_events=drop_events, scope_label=scope_label,
+        )
+    if method == 'spring':
+        return _compute_spring_for_matrix(
+            matrix_by_sample, features, sample_ids, params, progress_range,
+            drop_events=drop_events, scope_label=scope_label,
+        )
+    raise ValueError(f'{method!r} is not a supported network-inference method.')
 
 
 def _extract_taxon_name(feature_name: str, grouping_mode: str) -> str:
@@ -792,6 +1225,7 @@ def _apply_taxa_filters(
     features: list,
     domain_label: str,
     params: dict,
+    sample_totals: dict | None = None,
 ) -> tuple[dict, list, dict]:
     """Apply the user-configured taxa filters to one domain.
 
@@ -799,80 +1233,92 @@ def _apply_taxa_filters(
     grouping, using each domain's own samples — the conventional order: rare and
     noisy features are removed first, then the survivors are aggregated.
 
-    Nothing here transforms the matrix that reaches the correlation step: the
-    relative abundances are computed only to evaluate the filters. Returns
-    ``(restricted_matrix, kept_features, report)``.
+    The abundance levels on which the filters operate are *relative*: every
+    sample is closed to a per-sample total before prevalence/abundance/variance
+    are evaluated. By default that total is this domain's own sum
+    (``denominator='domain'``). In combined mode (``datasetType='both'``) the
+    caller passes ``sample_totals`` with the bacteria + fungi per-sample sum, so
+    mean relative abundance and variance are measured on the *same scale the
+    correlation model uses* (``denominator='combined_bacteria_fungi'``). A sample
+    missing from ``sample_totals`` falls back to its domain total. The input
+    matrix is never transformed, because the correlation backends apply their
+    own compositional transform. Returns ``(restricted_matrix, kept_features,
+    report)``.
+
+    Scope is deliberately **global**: thresholds are evaluated on every sample
+    present in this domain's abundance table (all conditions), which keeps the
+    candidate taxon set identical for the conditions being compared. The report
+    records that scope and the denominator it used.
     """
     config = params.get('taxaFiltering') or {}
     samples = list(matrix_by_sample.keys())
+    enabled = bool(config.get('enabled'))
 
     report = {
         'domain': domain_label,
-        'enabled': bool(config.get('enabled')),
+        'enabled': enabled,
+        # Thresholds see every sample in the abundance table, not only the
+        # selected conditions (documented scope; see module docs above).
+        'scope': 'all_samples_in_abundance_table',
         'total_samples': len(samples),
         'before': len(features),
         'after': len(features),
+        'relative_abundance_denominator': (
+            None if not enabled
+            else ('combined_bacteria_fungi' if sample_totals is not None else 'domain')
+        ),
+        'removed_share_percent': 0.0,
+        'aggressive_removal': False,
         'filters': {},
         'excluded': [],
     }
-    if not config.get('enabled') or not features or not samples:
+    if not enabled or not features or not samples:
         return matrix_by_sample, features, report
 
     # Per-sample totals (relative-abundance denominators). Only features of this
-    # domain participate, so relative abundances are domain-relative. A sample
+    # domain participate, so relative abundances are domain-relative unless the
+    # caller overrides the totals (combined bacteria + fungi mode). A sample
     # whose total is zero contributes 0 to every taxon.
-    sample_totals = {}
+    domain_totals = {}
     for sample_id in samples:
         values = matrix_by_sample[sample_id]
-        sample_totals[sample_id] = sum(float(values.get(feature, 0.0)) for feature in features)
+        domain_totals[sample_id] = sum(float(values.get(feature, 0.0)) for feature in features)
+    if sample_totals is None:
+        resolved_totals = domain_totals
+    else:
+        resolved_totals = {
+            sample_id: float(sample_totals.get(sample_id, default_total))
+            for sample_id, default_total in domain_totals.items()
+        }
 
     prevalence_cfg = config.get('prevalence') or {}
     mean_cfg = config.get('meanRelativeAbundance') or {}
-    count_cfg = config.get('totalCount') or {}
     variability_cfg = config.get('variability') or {}
 
     prevalence_enabled = bool(prevalence_cfg.get('enabled'))
     mean_enabled = bool(mean_cfg.get('enabled'))
-    count_enabled = bool(count_cfg.get('enabled'))
     variability_enabled = bool(variability_cfg.get('enabled'))
 
     prevalence_percent = float(prevalence_cfg.get('percent', 0) or 0)
     mean_threshold = float(mean_cfg.get('percent', 0) or 0) / 100.0
-    count_threshold = float(count_cfg.get('minCount', 0) or 0)
     variance_threshold = float(variability_cfg.get('minVariance', 0) or 0)
 
-    # The total-count filter only makes sense for raw count data. If the values
-    # are not non-negative integers the threshold is a sum of relative/transformed
-    # values; warn instead of silently applying a meaningless cutoff.
-    if count_enabled:
-        looks_like_counts = all(
-            float(value).is_integer() and float(value) >= 0
-            for sample_id in samples
-            for value in matrix_by_sample[sample_id].values()
-        )
-        if not looks_like_counts:
-            log(
-                f"  WARNING: 'minimum total count' is enabled for {domain_label}, but the data "
-                "does not look like raw integer counts; the threshold may not be meaningful."
-            )
-
-    removed_by = {'prevalence': 0, 'meanRelativeAbundance': 0, 'totalCount': 0, 'variability': 0}
+    removed_by = {'prevalence': 0, 'meanRelativeAbundance': 0, 'variability': 0}
     kept_features = []
 
     for feature in features:
-        raw_values = [float(matrix_by_sample[sample_id].get(feature, 0.0)) for sample_id in samples]
-        total_count = sum(raw_values)
-        positive_count = sum(1 for value in raw_values if value > 0)
+        abundance_values = [float(matrix_by_sample[sample_id].get(feature, 0.0)) for sample_id in samples]
+        positive_count = sum(1 for value in abundance_values if value > 0)
         prevalence_frac = positive_count / len(samples)
 
         relative_values = []
-        for sample_id, value in zip(samples, raw_values):
-            total = sample_totals.get(sample_id, 0.0)
+        for sample_id, value in zip(samples, abundance_values):
+            total = resolved_totals.get(sample_id, 0.0)
             relative_values.append(value / total if total > 0 else 0.0)
         # Zero-abundance samples contribute 0 to the mean, so a taxon present in
         # few samples is diluted rather than averaged over present samples only.
         mean_relative = sum(relative_values) / len(relative_values) if relative_values else 0.0
-        # Population variance of the relative abundances (metric for filter D).
+        # Population variance of the relative abundances (metric for filter C).
         variance = (
             sum((value - mean_relative) ** 2 for value in relative_values) / len(relative_values)
             if relative_values else 0.0
@@ -883,8 +1329,6 @@ def _apply_taxa_filters(
             reasons.append('prevalence')
         if mean_enabled and mean_relative < mean_threshold:
             reasons.append('meanRelativeAbundance')
-        if count_enabled and total_count < count_threshold:
-            reasons.append('totalCount')
         if variability_enabled and variance < variance_threshold:
             reasons.append('variability')
 
@@ -896,13 +1340,18 @@ def _apply_taxa_filters(
                 'reasons': reasons,
                 'prevalence_percent': round(prevalence_frac * 100.0, 4),
                 'mean_relative_abundance_percent': round(mean_relative * 100.0, 6),
-                'total_count': total_count,
                 'relative_abundance_variance': variance,
             })
         else:
             kept_features.append(feature)
 
+    removed_total = len(features) - len(kept_features)
     report['after'] = len(kept_features)
+    report['removed_share_percent'] = round((removed_total / len(features)) * 100.0, 4)
+    # Guardrail: with few samples (or a combined bacteria + fungi denominator,
+    # which is ~100x stricter for the minority domain) an aggressive threshold
+    # can wipe out most of a domain. Surface it instead of failing later.
+    report['aggressive_removal'] = bool(features) and (removed_total / len(features)) > 0.6
     report['filters'] = {
         'prevalence': {
             'enabled': prevalence_enabled,
@@ -914,11 +1363,6 @@ def _apply_taxa_filters(
             'threshold_percent': mean_threshold * 100.0,
             'removed': removed_by['meanRelativeAbundance'],
         },
-        'totalCount': {
-            'enabled': count_enabled,
-            'threshold': count_threshold,
-            'removed': removed_by['totalCount'],
-        },
         'variability': {
             'enabled': variability_enabled,
             'threshold': variance_threshold,
@@ -928,7 +1372,8 @@ def _apply_taxa_filters(
 
     log(
         f"Taxa filtering [{domain_label}]: {len(features)} -> {len(kept_features)} features "
-        f"({len(features) - len(kept_features)} removed) across {len(samples)} samples"
+        f"({len(features) - len(kept_features)} removed) across {len(samples)} samples; "
+        f"relative-abundance denominator: {report['relative_abundance_denominator']}"
     )
     for name, info in report['filters'].items():
         if info['enabled']:
@@ -936,6 +1381,12 @@ def _apply_taxa_filters(
                 f"    - {name}: removed {info['removed']} "
                 f"(threshold {info.get('threshold_percent', info.get('threshold'))})"
             )
+    if report['aggressive_removal']:
+        log(
+            f"    WARNING: the taxa filters removed {report['removed_share_percent']}% of the "
+            f"{domain_label} taxa — the thresholds look very aggressive for this dataset. "
+            "Consider relaxing the preset or the individual thresholds."
+        )
 
     restricted = _restrict_features(matrix_by_sample, kept_features)
     return restricted, kept_features, report
@@ -952,9 +1403,17 @@ def _build_condition_pairs(
     bacteria_sample_to_condition: dict,
     fungi_sample_to_condition: dict,
     progress_range: tuple[float, float] | None = None,
+    drop_events: list | None = None,
 ) -> list:
-    if method not in {'spearman', 'sparcc', 'spieceasi'}:
-        raise ValueError(f"Unsupported correlation method '{method}'. Use spearman, sparcc or spieceasi")
+    if method not in CORRELATION_METHODS:
+        raise ValueError(
+            f"Unsupported correlation method '{method}'. Use "
+            f"{', '.join(sorted(CORRELATION_METHODS))}"
+        )
+
+    events_start = len(drop_events) if drop_events is not None else 0
+    # Cross-domain pairs are fitted on one combined bac+fun matrix.
+    scope_label = f'bac+fun · {condition}'
 
     bacteria_condition_samples = {
         sample_id
@@ -982,7 +1441,8 @@ def _build_condition_pairs(
     rows = []
     corr_matrix = {}
     pval_matrix = {}
-    if method in {'sparcc', 'spieceasi'}:
+    diagnostics = {}
+    if method in MATRIX_METHODS:
         combined_features = [f'bac::{name}' for name in bacteria_features] + [f'fun::{name}' for name in fungi_features]
         combined_matrix_by_sample = {}
         for sample_id in common_samples:
@@ -999,20 +1459,38 @@ def _build_condition_pairs(
                 common_samples,
                 params,
                 progress_range,
+                drop_events=drop_events,
+                scope_label=scope_label,
             )
-        else:
-            corr_matrix, pval_matrix, diagnostics = _compute_spieceasi_for_matrix(
+        elif method == 'cclasso':
+            corr_matrix, pval_matrix, diagnostics = _compute_cclasso_for_matrix(
                 combined_matrix_by_sample,
                 combined_features,
                 common_samples,
                 params,
                 progress_range,
+                drop_events=drop_events,
+                scope_label=scope_label,
+            )
+        else:
+            corr_matrix, pval_matrix, diagnostics = _compute_network_for_matrix(
+                method,
+                combined_matrix_by_sample,
+                combined_features,
+                common_samples,
+                params,
+                progress_range,
+                drop_events=drop_events,
+                scope_label=scope_label,
             )
             if diagnostics.get('edge_count', 0) > 0:
                 log(
-                    f"  SPIEC-EASI MB cross-domain selected lambda="
+                    f"  {method.upper()} cross-domain selected lambda="
                     f"{diagnostics['selected_lambda']:.6g} with {diagnostics['edge_count']} edges"
                 )
+        if drop_events is not None:
+            for event in drop_events[events_start:]:
+                event.setdefault('condition', condition)
 
     for bac in bacteria_features:
         for fun in fungi_features:
@@ -1029,7 +1507,7 @@ def _build_condition_pairs(
             if len(x_values) < 3:
                 continue
 
-            if method in {'sparcc', 'spieceasi'}:
+            if method in MATRIX_METHODS:
                 correlation, p_value = _get_pair_stat(
                     corr_matrix,
                     pval_matrix,
@@ -1038,10 +1516,12 @@ def _build_condition_pairs(
                 )
             else:
                 correlation, p_value = _compute_spearman(x_values, y_values)
-            if math.isnan(correlation) or math.isnan(p_value):
+            if math.isnan(correlation) or (
+                p_value is not None and not math.isfinite(p_value)
+            ):
                 continue
 
-            rows.append({
+            row = {
                 'row': bac,
                 'column': fun,
                 'cor': correlation,
@@ -1050,7 +1530,14 @@ def _build_condition_pairs(
                 'condition': condition,
                 'row_kind': 'bacteria',
                 'column_kind': 'fungi',
-            })
+                'weight_type': diagnostics.get('weight_type', 'correlation'),
+                'evidence_type': diagnostics.get('evidence_type', 'p_value'),
+                'method_diagnostics': diagnostics,
+            }
+            if method in NETWORK_METHODS:
+                row['selected'] = True
+                row['selection_method'] = 'StARS'
+            rows.append(row)
 
     return rows
 
@@ -1066,8 +1553,10 @@ def _build_both_domain_pairs(
     bacteria_sample_to_condition: dict,
     fungi_sample_to_condition: dict,
     progress_range: tuple[float, float] | None = None,
+    drop_events: list | None = None,
 ) -> list:
-    if method == 'spieceasi':
+    events_start = len(drop_events) if drop_events is not None else 0
+    if method in NETWORK_METHODS:
         bacteria_condition_samples = {
             sample_id
             for sample_id, sample_condition in bacteria_sample_to_condition.items()
@@ -1095,12 +1584,15 @@ def _build_both_domain_pairs(
                 sample_values[f'fun::{feature}'] = fungi_by_sample[sample_id].get(feature, 0.0)
             combined_matrix_by_sample[sample_id] = sample_values
 
-        corr_matrix, pval_matrix, diagnostics = _compute_spieceasi_for_matrix(
+        corr_matrix, pval_matrix, diagnostics = _compute_network_for_matrix(
+            method,
             combined_matrix_by_sample,
             combined_features,
             common_samples,
             params,
             progress_range,
+            drop_events=drop_events,
+            scope_label=f'bac+fun · {condition}',
         )
 
         rows = []
@@ -1108,11 +1600,13 @@ def _build_both_domain_pairs(
             for j in range(i + 1, len(combined_features)):
                 right = combined_features[j]
                 correlation, p_value = _get_pair_stat(corr_matrix, pval_matrix, left, right)
-                if math.isnan(correlation) or math.isnan(p_value):
+                if math.isnan(correlation) or (
+                    p_value is not None and not math.isfinite(p_value)
+                ):
                     continue
                 left_kind, left_name = ('bacteria', left[5:]) if left.startswith('bac::') else ('fungi', left[5:])
                 right_kind, right_name = ('bacteria', right[5:]) if right.startswith('bac::') else ('fungi', right[5:])
-                rows.append({
+                row = {
                     'row': left_name,
                     'column': right_name,
                     'cor': correlation,
@@ -1121,12 +1615,21 @@ def _build_both_domain_pairs(
                     'condition': condition,
                     'row_kind': left_kind,
                     'column_kind': right_kind,
-                })
+                    'weight_type': diagnostics.get('weight_type', 'latent_correlation'),
+                    'evidence_type': 'stars',
+                    'selected': True,
+                    'selection_method': 'StARS',
+                    'method_diagnostics': diagnostics,
+                }
+                rows.append(row)
 
         log(
-            f"  Combined pairs (SPIEC-EASI): total={len(rows)}, selected_edges="
+            f"  Combined pairs ({method.upper()}): total={len(rows)}, selected_edges="
             f"{diagnostics.get('edge_count', 0)}, selected_lambda={diagnostics.get('selected_lambda', math.nan):.6g}"
         )
+        if drop_events is not None:
+            for event in drop_events[events_start:]:
+                event.setdefault('condition', condition)
         return rows
 
     # In combined mode, include all biologically relevant edges:
@@ -1143,6 +1646,7 @@ def _build_both_domain_pairs(
         bacteria_sample_to_condition,
         'bacteria',
         progress_range=(lo, lo + third),
+        drop_events=drop_events,
     )
     fun_pairs = _build_same_domain_pairs(
         condition,
@@ -1153,6 +1657,7 @@ def _build_both_domain_pairs(
         fungi_sample_to_condition,
         'fungi',
         progress_range=(lo + third, lo + 2 * third),
+        drop_events=drop_events,
     )
     cross_pairs = _build_condition_pairs(
         condition,
@@ -1165,6 +1670,7 @@ def _build_both_domain_pairs(
         bacteria_sample_to_condition,
         fungi_sample_to_condition,
         progress_range=(lo + 2 * third, hi),
+        drop_events=drop_events,
     )
     log(
         f"  Combined pairs: bacteria-bacteria={len(bac_pairs)}, "
@@ -1182,9 +1688,16 @@ def _build_same_domain_pairs(
     sample_to_condition: dict,
     kind_label: str,
     progress_range: tuple[float, float] | None = None,
+    drop_events: list | None = None,
 ) -> list:
-    if method not in {'spearman', 'sparcc', 'spieceasi'}:
-        raise ValueError(f"Unsupported correlation method '{method}'. Use spearman, sparcc or spieceasi")
+    if method not in CORRELATION_METHODS:
+        raise ValueError(
+            f"Unsupported correlation method '{method}'. Use "
+            f"{', '.join(sorted(CORRELATION_METHODS))}"
+        )
+
+    events_start = len(drop_events) if drop_events is not None else 0
+    scope_label = f'{kind_label} · {condition}'
 
     condition_samples = {
         sample_id
@@ -1203,7 +1716,8 @@ def _build_same_domain_pairs(
     rows = []
     corr_matrix = {}
     pval_matrix = {}
-    if method in {'sparcc', 'spieceasi'}:
+    diagnostics = {}
+    if method in MATRIX_METHODS:
         if method == 'sparcc':
             corr_matrix, pval_matrix = _compute_sparcc_for_matrix(
                 domain_by_sample,
@@ -1211,20 +1725,38 @@ def _build_same_domain_pairs(
                 common_samples,
                 params,
                 progress_range,
+                drop_events=drop_events,
+                scope_label=scope_label,
             )
-        else:
-            corr_matrix, pval_matrix, diagnostics = _compute_spieceasi_for_matrix(
+        elif method == 'cclasso':
+            corr_matrix, pval_matrix, diagnostics = _compute_cclasso_for_matrix(
                 domain_by_sample,
                 domain_features,
                 common_samples,
                 params,
                 progress_range,
+                drop_events=drop_events,
+                scope_label=scope_label,
+            )
+        else:
+            corr_matrix, pval_matrix, diagnostics = _compute_network_for_matrix(
+                method,
+                domain_by_sample,
+                domain_features,
+                common_samples,
+                params,
+                progress_range,
+                drop_events=drop_events,
+                scope_label=scope_label,
             )
             if diagnostics.get('edge_count', 0) > 0:
                 log(
-                    f"  SPIEC-EASI MB {kind_label} selected lambda="
+                    f"  {method.upper()} {kind_label} selected lambda="
                     f"{diagnostics['selected_lambda']:.6g} with {diagnostics['edge_count']} edges"
                 )
+        if drop_events is not None:
+            for event in drop_events[events_start:]:
+                event.setdefault('condition', condition)
 
     for i in range(len(domain_features)):
         left = domain_features[i]
@@ -1243,14 +1775,16 @@ def _build_same_domain_pairs(
             if len(x_values) < 3:
                 continue
 
-            if method in {'sparcc', 'spieceasi'}:
+            if method in MATRIX_METHODS:
                 correlation, p_value = _get_pair_stat(corr_matrix, pval_matrix, left, right)
             else:
                 correlation, p_value = _compute_spearman(x_values, y_values)
-            if math.isnan(correlation) or math.isnan(p_value):
+            if math.isnan(correlation) or (
+                p_value is not None and not math.isfinite(p_value)
+            ):
                 continue
 
-            rows.append({
+            row = {
                 'row': left,
                 'column': right,
                 'cor': correlation,
@@ -1259,7 +1793,14 @@ def _build_same_domain_pairs(
                 'condition': condition,
                 'row_kind': kind_label,
                 'column_kind': kind_label,
-            })
+                'weight_type': diagnostics.get('weight_type', 'correlation'),
+                'evidence_type': diagnostics.get('evidence_type', 'p_value'),
+                'method_diagnostics': diagnostics,
+            }
+            if method in NETWORK_METHODS:
+                row['selected'] = True
+                row['selection_method'] = 'StARS'
+            rows.append(row)
 
     log(
         f"  Pairs computed: {len(rows)} ({method} correlation on {len(common_samples)} samples per pair, "
@@ -1271,7 +1812,10 @@ def _build_same_domain_pairs(
 def _write_pairs_csv(job_id: str, condition: str, rows: list) -> str:
     file_name = f"corr_pairs_{job_id}_{_slug(condition)}.csv"
     output_path = os.path.join(tempfile.gettempdir(), file_name)
-    fieldnames = ['row', 'column', 'cor', 'p']
+    fieldnames = [
+        'row', 'column', 'cor', 'p', 'weight_type', 'evidence_type',
+        'selection_method', 'selected',
+    ]
     with open(output_path, 'w', newline='', encoding='utf-8') as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
@@ -1281,16 +1825,30 @@ def _write_pairs_csv(job_id: str, condition: str, rows: list) -> str:
                 'column': row['column'],
                 'cor': row['cor'],
                 'p': row['p'],
+                'weight_type': row.get('weight_type', 'correlation'),
+                'evidence_type': row.get('evidence_type', 'p_value'),
+                'selection_method': row.get('selection_method', ''),
+                'selected': row.get('selected', ''),
             })
     return output_path
 
 
-def _build_graph_from_pairs(rows: list, p_value_threshold: float, overabundance_by_node: dict | None = None) -> dict:
-    significant_rows = [row for row in rows if row['p'] <= p_value_threshold]
+def _build_graph_from_pairs(
+    rows: list,
+    p_value_threshold: float | None,
+    overabundance_by_node: dict | None = None,
+) -> dict:
+    if p_value_threshold is None:
+        selected_rows = [row for row in rows if row.get('selected', False)]
+    else:
+        selected_rows = [
+            row for row in rows
+            if row.get('p') is not None and row['p'] <= p_value_threshold
+        ]
     node_ids = set()
     node_kinds = {}
     edges = []
-    for row in significant_rows:
+    for row in selected_rows:
         source = row['row']
         target = row['column']
         node_ids.add(source)
@@ -1303,6 +1861,9 @@ def _build_graph_from_pairs(rows: list, p_value_threshold: float, overabundance_
             'weight': row['cor'],
             'p_value': row['p'],
             'method': row['method'],
+            'weight_type': row.get('weight_type', 'correlation'),
+            'evidence_type': row.get('evidence_type', 'p_value'),
+            'selection_method': row.get('selection_method'),
         })
 
     nodes = []
@@ -1316,16 +1877,25 @@ def _build_graph_from_pairs(rows: list, p_value_threshold: float, overabundance_
             'overabundance': float(overabundance_by_node.get((node_id, kind), 1.0)),
         })
 
+    stats = {
+        'total_pairs': len(rows),
+        'node_count': len(nodes),
+        'edge_count': len(edges),
+        'p_value_threshold': p_value_threshold,
+        'p_value_threshold_applied': p_value_threshold is not None,
+        'weight_type': rows[0].get('weight_type', 'correlation') if rows else 'correlation',
+        'evidence_type': rows[0].get('evidence_type', 'p_value') if rows else 'p_value',
+        'method_diagnostics': rows[0].get('method_diagnostics', {}) if rows else {},
+    }
+    if p_value_threshold is None:
+        stats['selected_pairs'] = len(selected_rows)
+    else:
+        stats['significant_pairs'] = len(selected_rows)
+
     return {
         'nodes': nodes,
         'edges': edges,
-        'stats': {
-            'total_pairs': len(rows),
-            'significant_pairs': len(significant_rows),
-            'node_count': len(nodes),
-            'edge_count': len(edges),
-            'p_value_threshold': p_value_threshold,
-        },
+        'stats': stats,
     }
 
 
@@ -1467,17 +2037,24 @@ def run(job_id: str, files: dict, params: dict) -> dict:
     condition_a = params.get("conditionA")
     condition_b = params.get("conditionB")
     grouping_mode = params.get('groupingMode', 'all')
-    p_value_threshold = float(params.get('pValueThreshold', 0.05))
-    # Minimum |correlation| for an edge to enter the graph. 0 disables the
-    # filter; a positive value keeps both strong positive and strong negative
-    # edges and drops the weak ones on either side.
+    p_value_threshold = (
+        float(params.get('pValueThreshold', 0.05))
+        if correlation_method in P_VALUE_METHODS else None
+    )
+    # Minimum absolute edge score. It is a correlation threshold for pairwise
+    # methods, StARS stability for SPIEC-EASI, and latent correlation for SPRING.
     correlation_threshold = abs(float(params.get('correlationThreshold', 0) or 0))
 
     log(f"Starting analysis for job {job_id}")
     log(f"Dataset type: {dataset_type}")
     log(f"Correlation method: {correlation_method}")
     log(f"Grouping mode: {grouping_mode}")
-    log(f"Correlation filter (min |r|): {correlation_threshold}")
+    if correlation_method == 'spieceasi':
+        log(f"StARS edge-stability filter (minimum): {correlation_threshold}")
+    elif correlation_method == 'spring':
+        log(f"Correlation filter (minimum |r|, latent correlation): {correlation_threshold}")
+    else:
+        log(f"Correlation filter (minimum |r|): {correlation_threshold}")
     log(f"Condition column: {condition_column}")
     log(f"Condition comparison: {condition_a} vs {condition_b}")
     log(f"Bacteria files: {bacteria_files}")
@@ -1500,8 +2077,10 @@ def run(job_id: str, files: dict, params: dict) -> dict:
         raise ValueError('conditionA and conditionB must be different')
     if grouping_mode not in {'all', 'phylum', 'genus'}:
         raise ValueError("groupingMode must be one of: all, phylum, genus")
-    if correlation_method not in {'spearman', 'sparcc', 'spieceasi'}:
-        raise ValueError("correlationMethod must be one of: spearman, sparcc, spieceasi")
+    if correlation_method not in CORRELATION_METHODS:
+        raise ValueError(
+            f"correlationMethod must be one of: {', '.join(sorted(CORRELATION_METHODS))}"
+        )
     if correlation_threshold < 0 or correlation_threshold > 1:
         raise ValueError("correlationThreshold must be between 0 and 1")
 
@@ -1531,15 +2110,62 @@ def run(job_id: str, files: dict, params: dict) -> dict:
     # ── Taxa filtering (per domain, before grouping) ──────────────────────────
     # Applied here so every downstream step (grouping, correlation, graphs) sees
     # only the surviving taxa. Disabled master toggle ⇒ both calls are no-ops.
+    # Scope is deliberately global: thresholds use every sample of the domain's
+    # abundance table, so both selected conditions start from the same candidate
+    # taxon set (and the same graph node pool).
     taxa_filtering_config = params.get('taxaFiltering') or {}
     log(f"Taxa filtering enabled: {bool(taxa_filtering_config.get('enabled'))}")
+    log(
+        "Taxa filtering scope: every sample of the abundance table (all conditions) — "
+        "both selected conditions start from the same candidate taxon set"
+    )
     taxa_filtering_report = {}
+
+    # Relative-abundance denominator for filters B (mean) and C (variance). In
+    # combined mode the correlation methods close the fused bac::/fun:: matrix on
+    # bacteria + fungi *together*, so the filters must measure abundance on that
+    # same scale: with a per-domain denominator the minority domain looks ~100x
+    # more abundant to the filter than it is to the model (variance ~10^4x).
+    # Prevalence is scale-free and is unaffected by this choice.
+    filter_totals: dict | None = None
+    if dataset_type == 'both' and bacteria_by_sample and fungi_by_sample:
+        bac_totals = {
+            sample_id: sum(float(values.get(f, 0.0)) for f in bacteria_features)
+            for sample_id, values in bacteria_by_sample.items()
+        }
+        fun_totals = {
+            sample_id: sum(float(values.get(f, 0.0)) for f in fungi_features)
+            for sample_id, values in fungi_by_sample.items()
+        }
+        filter_totals = {
+            sample_id: bac_totals.get(sample_id, 0.0) + fun_totals.get(sample_id, 0.0)
+            for sample_id in set(bac_totals) | set(fun_totals)
+        }
+        log(
+            "Taxa-filtering denominator: combined bacteria + fungi per-sample total "
+            "(same scale as the combined matrix fed to the correlation model)"
+        )
+
+    taxa_filtering_report['meta'] = {
+        'scope': 'all_samples_in_abundance_table',
+        'relative_abundance_denominator': (
+            'combined_bacteria_fungi' if filter_totals is not None else 'domain'
+        ),
+        'method_removals': [],
+        'method_removals_note': (
+            'Taxa/samples discarded by the correlation method itself (zero variance in the '
+            'analysed sample subset, all-zero samples) after the user filters above. Scopes '
+            'are per condition and matrix, so counts may overlap when datasetType="both"; the '
+            'exact model input size is graph.stats.method_diagnostics.n_taxa.'
+        ),
+    }
     if bacteria_by_sample:
         bacteria_by_sample, bacteria_features, bac_filter_report = _apply_taxa_filters(
             bacteria_by_sample,
             bacteria_features,
             'bacteria',
             params,
+            sample_totals=filter_totals,
         )
         taxa_filtering_report['bacteria'] = bac_filter_report
     if fungi_by_sample:
@@ -1548,6 +2174,7 @@ def run(job_id: str, files: dict, params: dict) -> dict:
             fungi_features,
             'fungi',
             params,
+            sample_totals=filter_totals,
         )
         taxa_filtering_report['fungi'] = fun_filter_report
 
@@ -1599,6 +2226,9 @@ def run(job_id: str, files: dict, params: dict) -> dict:
     # Build graph artifacts for selected conditions only.
     selected_conditions = [condition_a, condition_b]
     condition_graphs = []
+    # Method-side removals (constant taxa / empty samples) collected per run and
+    # attached to the taxa-filtering report below — see _record_method_drop.
+    method_drop_events: list = []
 
     for idx, condition in enumerate(selected_conditions):
         if not condition:
@@ -1662,6 +2292,7 @@ def run(job_id: str, files: dict, params: dict) -> dict:
                 bacteria_sample_to_condition,
                 fungi_sample_to_condition,
                 progress_range=(10 + idx * 30, 25 + idx * 30),
+                drop_events=method_drop_events,
             )
         elif dataset_type == 'bacteria':
             all_pairs = _build_same_domain_pairs(
@@ -1673,6 +2304,7 @@ def run(job_id: str, files: dict, params: dict) -> dict:
                 sample_to_condition,
                 'bacteria',
                 progress_range=(10 + idx * 30, 25 + idx * 30),
+                drop_events=method_drop_events,
             )
         else:
             all_pairs = _build_same_domain_pairs(
@@ -1684,21 +2316,34 @@ def run(job_id: str, files: dict, params: dict) -> dict:
                 sample_to_condition,
                 'fungi',
                 progress_range=(10 + idx * 30, 25 + idx * 30),
+                drop_events=method_drop_events,
             )
 
         report_progress(25 + idx * 30)
-        log(
-            f"Filtering pairs for condition '{condition}' "
-            f"(p <= {p_value_threshold}, |r| >= {correlation_threshold})"
-        )
-        significant_pairs = [row for row in all_pairs if row['p'] <= p_value_threshold]
+        if p_value_threshold is None:
+            log(
+                f"Filtering StARS-selected network edges for condition '{condition}' "
+                f"(minimum score={correlation_threshold}; no pairwise p-values are produced)"
+            )
+            significant_pairs = [row for row in all_pairs if row.get('selected', False)]
+        else:
+            log(
+                f"Filtering pairs for condition '{condition}' "
+                f"(p <= {p_value_threshold}, |r| >= {correlation_threshold})"
+            )
+            significant_pairs = [
+                row for row in all_pairs
+                if row.get('p') is not None and row['p'] <= p_value_threshold
+            ]
         filtered_pairs = [
             row for row in significant_pairs
             if abs(float(row['cor'])) >= correlation_threshold
         ]
         log(
             f"  All pairs computed: {len(all_pairs)} | "
-            f"Significant (p ≤ {p_value_threshold}): {len(significant_pairs)} | "
+            f"{'Significant' if p_value_threshold is not None else 'Selected'} "
+            f"({'p ≤ ' + str(p_value_threshold) if p_value_threshold is not None else 'StARS'}): "
+            f"{len(significant_pairs)} | "
             f"After |r| ≥ {correlation_threshold}: {len(filtered_pairs)}"
         )
         pair_file_path = _write_pairs_csv(job_id, condition, filtered_pairs)
@@ -1715,12 +2360,45 @@ def run(job_id: str, files: dict, params: dict) -> dict:
 
         graph = _build_graph_from_pairs(filtered_pairs, p_value_threshold, overabundance_map)
         graph['stats']['correlation_threshold'] = correlation_threshold
+        graph['stats']['weight_type'] = (
+            'selection_stability' if correlation_method == 'spieceasi'
+            else 'latent_correlation' if correlation_method == 'spring'
+            else 'correlation'
+        )
+        graph['stats']['evidence_type'] = (
+            'stars' if correlation_method in NETWORK_METHODS
+            else 'bootstrap_p_value' if correlation_method == 'cclasso'
+            else 'permutation_p_value' if correlation_method == 'sparcc'
+            else 'pairwise_p_value'
+        )
+        graph['stats']['correlation_threshold_label'] = (
+            'minimum_stars_edge_stability'
+            if correlation_method == 'spieceasi'
+            else 'minimum_absolute_correlation'
+        )
         graph_id = f"{job_id}:{_slug(condition)}"
         graph['stats'].update(sample_stats)
         condition_graphs.append({
             'graph_id': graph_id,
             'condition': condition,
             'correlation_method': correlation_method,
+            'p_value_threshold_applied': p_value_threshold is not None,
+            'evidence_type': (
+                'stars'
+                if correlation_method in NETWORK_METHODS
+                else 'bootstrap_p_value'
+                if correlation_method == 'cclasso'
+                else 'permutation_p_value'
+                if correlation_method == 'sparcc'
+                else 'pairwise_p_value'
+            ),
+            'weight_type': (
+                'selection_stability'
+                if correlation_method == 'spieceasi'
+                else 'latent_correlation'
+                if correlation_method == 'spring'
+                else 'correlation'
+            ),
             'pair_file': {
                 'format': 'csv',
                 'path': pair_file_path,
@@ -1735,6 +2413,16 @@ def run(job_id: str, files: dict, params: dict) -> dict:
                 'message': 'Clustering algorithm not implemented yet.',
             },
         })
+
+    # ── Method-side removals → taxa-filtering report ─────────────────────────
+    # These used to exist only as log lines, which made report before/after
+    # disagree with the number of taxa the model actually saw.
+    taxa_filtering_report['meta']['method_removals'] = method_drop_events
+    for event in method_drop_events:
+        log(
+            f"Method-side removal [{event['scope']} · {event['method']}]: "
+            f"{event['count']} {event['item_kind']} ({event['kind']})"
+        )
 
     # Simulate remaining pipeline work and complete progress.
     for step, pct in enumerate([85, 100]):
@@ -1751,32 +2439,36 @@ def run(job_id: str, files: dict, params: dict) -> dict:
             "n_fungi_metadata_files": len(fungi_metadata_files),
             "dataset_type": dataset_type,
             "correlation_method": correlation_method,
+            "method_settings": json.dumps(
+                _method_settings(correlation_method, params),
+                sort_keys=True,
+                separators=(',', ':'),
+            ),
             "condition_a": condition_a,
             "condition_b": condition_b,
             "selected_conditions": [c for c in selected_conditions if c],
             "grouping_mode": grouping_mode,
             "p_value_threshold": p_value_threshold,
+            "p_value_threshold_applied": p_value_threshold is not None,
+            "evidence_type": (
+                'stars' if correlation_method in NETWORK_METHODS
+                else 'bootstrap_p_value' if correlation_method == 'cclasso'
+                else 'permutation_p_value' if correlation_method == 'sparcc'
+                else 'pairwise_p_value'
+            ),
+            "weight_type": (
+                'selection_stability' if correlation_method == 'spieceasi'
+                else 'latent_correlation' if correlation_method == 'spring'
+                else 'correlation'
+            ),
             "correlation_threshold": correlation_threshold,
             "taxa_filtering_enabled": bool(taxa_filtering_config.get('enabled')),
             "taxa_filtering": taxa_filtering_report,
-            "p_value":   0.0312,
-            "statistic": 4.721,
-            "status":    "significant",
         },
-        "charts": [
-            {
-                "type":  "line",
-                "title": "Metric over time",
-                "data": {
-                    "labels":   list(range(10)),
-                    "datasets": [{"label": "Value", "data": [1,3,2,5,4,7,6,8,9,10]}],
-                },
-            }
-        ],
-        "table": [
-            {"sample": f"s{i}", "value": round(i * 1.23, 3), "flag": i % 2 == 0}
-            for i in range(1, 11)
-        ],
+        # These are reserved for future, real analysis outputs. Never populate
+        # them with illustrative values in a statistical-results payload.
+        "charts": [],
+        "table": [],
         "graph_pipeline": {
             "version": 1,
             "status": "completed",

@@ -1,0 +1,66 @@
+{
+  "seed": 20261020,
+  "cases": 1000,
+  "design": {
+    "quantitative": false,
+    "nlambda": 5,
+    "lambda_min_ratio": 0.01,
+    "thresh": 0.1,
+    "subsample_ratio": 0.8,
+    "rep_num": 4,
+    "Rmethod": "approx",
+    "use_nearPD": true,
+    "nu": 0.001,
+    "ratio": 0.9,
+    "Rtol": 1e-06,
+    "opt_boundary_margin": 0.001,
+    "edge_boundary_freq": 0.05,
+    "coef_boundary": 1e-06,
+    "max_redraws": 20
+  },
+  "bridge_inversion_screening": {
+    "rule": "|K| > 0.9 * bound22(z1, z2) on full data and every replica",
+    "rejected_candidates": 78,
+    "executed_cases_with_cutoff_pairs": 0
+  },
+  "python_status_counts": {
+    "finite": 967,
+    "nonfinite": 0,
+    "error": 33
+  },
+  "r_status_counts": {
+    "finite": 967,
+    "nonfinite": 0,
+    "error": 33
+  },
+  "mismatch_counts": {
+    "status_mismatch": 0,
+    "opt_index_mismatch": 0,
+    "opt_index_boundary": 0,
+    "edge_mismatch": 1,
+    "edge_boundary": 1
+  },
+  "unexplained_count": 0,
+  "unexplained_preview": [],
+  "boundary_classified_count": 1,
+  "boundary_preview": [
+    {
+      "case": "case-00531",
+      "reason": "edge_set",
+      "python_only": [
+        "0:2"
+      ],
+      "R_only": [],
+      "min_freq_margin": "0.25",
+      "min_abs_coef": "0"
+    }
+  ],
+  "timing": {
+    "python_total_s": 342.519,
+    "python_mean_s": 0.342519,
+    "python_median_s": 0.073521,
+    "python_p95_s": 1.57161,
+    "r_total_s": 109.966,
+    "sweep_wall_s": 475.303
+  }
+}

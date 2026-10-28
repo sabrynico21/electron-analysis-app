@@ -1,14 +1,45 @@
 #!/usr/bin/env python3
-"""Run adaptive PageRank clustering over a cached condition graph payload."""
+"""Run PageRank-Nibble clustering over a cached condition graph payload.
+
+Payload keys
+------------
+``seedNode`` (required), ``graphData``, ``weighted``,
+``targetConductance``, ``b``, ``teleportAlpha``, ``signed``,
+``signLambda`` and the optional ``parameterOverrides``.
+
+``parameterProfile`` accepts only ``"app"`` (the default): the former
+``recommended`` profile was removed; and ``selection`` is ignored: the
+five-step ladder of ``selection_ladder.py`` is the only selection rule.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 
 from bacteria_graph import BacteriaGraph
 from bacteria_pagerank import pagerank_nibble_adaptive
+from clustering_advanced import pagerank_cluster
+from clustering_profiles import DEFAULT_TARGET_CONDUCTANCE, resolve_parameters
+
+
+def _json_safe(value):
+    """Recursively replace non-finite floats with ``None``.
+
+    JSON has no ``Infinity``/``NaN`` (RFC 8259) and the Electron side parses
+    this stream with ``JSON.parse``: emitting ``Infinity`` (the honest Python
+    representation of an undefined conductance, e.g. the seed-singleton
+    fallback) would make the whole response unreadable for the app.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 def build_graph(payload: dict) -> BacteriaGraph:
@@ -51,22 +82,70 @@ def main() -> int:
         raise ValueError("seedNode is required")
 
     weighted_mode = bool(payload.get("weighted", False))
+    profile = str(payload.get("parameterProfile", "app"))
+    signed = bool(payload.get("signed", False))
+    sign_lambda = float(payload.get("signLambda", 1.0))
 
     graph_payload = payload.get("graphData", {})
     graph = build_graph(graph_payload)
 
-    cluster_nodes, metadata = pagerank_nibble_adaptive(
-        graph,
-        seed,
-        target_conductance=float(payload.get("targetConductance", 0.2)),
-        b=(int(payload["b"]) if payload.get("b") is not None else None),
-        teleport_alpha=(float(payload["teleportAlpha"]) if payload.get("teleportAlpha") is not None else None),
-        weight="weight" if weighted_mode else None,
-        verbose=False,
+    overrides = {}
+    if payload.get("targetConductance") is not None:
+        overrides["target_conductance"] = float(payload["targetConductance"])
+    if payload.get("b") is not None:
+        overrides["b"] = int(payload["b"])
+    if payload.get("teleportAlpha") is not None:
+        overrides["teleport_alpha"] = float(payload["teleportAlpha"])
+    for key, value in (payload.get("parameterOverrides") or {}).items():
+        if value is not None:
+            overrides[key] = value
+    params = resolve_parameters(
+        graph, profile, weighted=weighted_mode, overrides=overrides
     )
+
+    # Boundary hygiene: an empty conductance field in the UI reaches this
+    # process as 0 (``Number('') === 0`` in JS), and every ladder step
+    # rejects a non-positive bar - only the singleton would survive.  Fall
+    # back to the app default and record the raw value for transparency.
+    phi_clamped_from = None
+    if not (params["target_conductance"] > 0):
+        phi_clamped_from = params["target_conductance"]
+        params["target_conductance"] = DEFAULT_TARGET_CONDUCTANCE
+    alpha_clamped_from = None
+    if params["teleport_alpha"] is not None and params["teleport_alpha"] < 0:
+        alpha_clamped_from = params["teleport_alpha"]
+        params["teleport_alpha"] = None
+
+    if signed:
+        cluster_nodes, metadata = pagerank_cluster(
+            graph,
+            seed,
+            target_conductance=params["target_conductance"],
+            b=params["b"],
+            teleport_alpha=params["teleport_alpha"],
+            weighted=weighted_mode,
+            signed=True,
+            sign_lambda=sign_lambda,
+        )
+    else:
+        cluster_nodes, metadata = pagerank_nibble_adaptive(
+            graph,
+            seed,
+            target_conductance=params["target_conductance"],
+            b=params["b"],
+            teleport_alpha=params["teleport_alpha"],
+            weight=params["weight"],
+            verbose=False,
+        )
 
     metadata = dict(metadata)
     metadata["weighted_mode"] = weighted_mode
+    metadata["parameters"] = params
+    metadata["signed_mode"] = signed
+    if phi_clamped_from is not None:
+        metadata["phi_clamped_from"] = phi_clamped_from
+    if alpha_clamped_from is not None:
+        metadata["alpha_clamped_from"] = alpha_clamped_from
 
     ranked_nodes = metadata.get("ranked_nodes") if isinstance(metadata, dict) else None
     subgraph = extract_subgraph(graph_payload.get("graph", {}), cluster_nodes, ranked_nodes)
@@ -79,7 +158,7 @@ def main() -> int:
         "metadata": metadata,
     }
 
-    print(json.dumps(output), flush=True)
+    print(json.dumps(_json_safe(output), allow_nan=False), flush=True)
     return 0
 
 

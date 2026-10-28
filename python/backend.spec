@@ -19,12 +19,31 @@ CLUSTERING_DIR = PYTHON_DIR / "clustering"
 # SPIEC-EASI lives in the standalone library so the app and the library share a
 # single source instead of a duplicated copy.
 SPIEC_EASI_SRC = REPO_ROOT / "spiec-easi-python" / "src"
+CCLASSO_SRC = REPO_ROOT / "cclasso-python" / "src"
+SPRING_SRC = REPO_ROOT / "spring-python" / "src"
+SPRING_IPOL = SPRING_SRC / "spring_microbiome" / "latentcor" / "data" / "ipol_22.npz"
+THIRD_PARTY_LICENSES = [
+    (str(REPO_ROOT / "cclasso-python" / "LICENSE"), "licenses/cclasso"),
+    (str(REPO_ROOT / "spiec-easi-python" / "LICENSE"), "licenses/spieceasi"),
+    (str(REPO_ROOT / "spring-python" / "LICENSE"), "licenses/spring"),
+]
 
 analysis = Analysis(
     [str(PYTHON_DIR / "backend.py")],
-    pathex=[str(PYTHON_DIR), str(CLUSTERING_DIR), str(SPIEC_EASI_SRC)],
+    pathex=[
+        str(PYTHON_DIR),
+        str(CLUSTERING_DIR),
+        str(SPIEC_EASI_SRC),
+        str(CCLASSO_SRC),
+        str(SPRING_SRC),
+    ],
     binaries=[],
-    datas=[],
+    # SPRING's approximate latentcor path loads its pinned interpolation table
+    # through importlib.resources at runtime.
+    datas=[
+        (str(SPRING_IPOL), "spring_microbiome/latentcor/data"),
+        *THIRD_PARTY_LICENSES,
+    ],
     # The clustering package is imported at function level from backend.py and
     # uses flat imports (`from bacteria_graph import ...`), so make sure the
     # modules are collected even though they are not top-level imports.
@@ -32,6 +51,7 @@ analysis = Analysis(
         "bacteria_graph",
         "bacteria_pagerank",
         "pagerank_nibble",
+        "selection_ladder",
         "spieceasi",
         "spieceasi._validation",
         "spieceasi.cli",
@@ -41,6 +61,21 @@ analysis = Analysis(
         "spieceasi.preprocess",
         "spieceasi.stars",
         "spieceasi.transforms",
+        "cclasso",
+        "cclasso._core",
+        "cclasso.validation",
+        "spring_microbiome",
+        "spring_microbiome.spring",
+        "spring_microbiome.mclr",
+        "spring_microbiome.huge_kmb",
+        "spring_microbiome.pulsar",
+        "spring_microbiome.latentcor",
+        "spring_microbiome.latentcor.latentcor",
+        "spring_microbiome.latentcor.bridge",
+        "spring_microbiome.latentcor.interp",
+        "spring_microbiome.latentcor.kendall",
+        "spring_microbiome.latentcor.nearpd",
+        "spring_microbiome.huge.mb",
     ],
     hookspath=[],
     hooksconfig={},

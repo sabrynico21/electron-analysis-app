@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cclasso"
+version = "0.1.0"
+description = "Python port of CCLasso: correlation inference for compositional data through Lasso (faithful translation of the R package, v2.0)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "LGPL-3.0-or-later" }
+authors = [{ name = "cclasso-python contributors" }]
+keywords = ["compositional data", "correlation", "lasso", "CCLasso", "microbiome"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.5"]
+
+[project.scripts]
+cclasso = "cclasso.cli:main"
+
+[project.urls]
+"Upstream R package" = "http://www.math.pku.edu.cn/teachers/dengmh/CCLasso/"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: long-running equivalence tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "NPY"]
+ignore = ["E741"]
+
+[tool.coverage.run]
+source = ["cclasso"]

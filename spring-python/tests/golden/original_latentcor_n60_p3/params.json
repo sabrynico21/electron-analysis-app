@@ -1,0 +1,13 @@
+{
+  "case": "original_latentcor_n60_p3",
+  "kind": "latentcor",
+  "dataset": "synthetic",
+  "n": 60,
+  "p": 3,
+  "quantitative": false,
+  "Rmethod": "original",
+  "Rtol": 9.9999999999999995e-07,
+  "use.nearPD": true,
+  "nu": 0.001,
+  "ratio": 0.90000000000000002
+}

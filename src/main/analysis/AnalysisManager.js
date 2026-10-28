@@ -23,7 +23,10 @@ class AnalysisManager {
     /** @type {Map<string, { cacheKey: string, path: string, version: number, jobId: string, condition: string }>} */
     this.graphCacheIndex = new Map()
 
-    this.cacheVersion = 1
+    // Version 2 stores network-selection evidence separately from pairwise
+    // p-values. Version-1 SPIEC-EASI caches used synthetic 0/1 p-values and are
+    // migrated on read so old histories are not misrepresented.
+    this.cacheVersion = 2
     this.pythonDepsReadyByInterpreter = new Map()
     /** @type {string|null} Interpreter resolved for this session */
     this.pythonInterpreter = null
@@ -154,7 +157,9 @@ class AnalysisManager {
     }
 
     await this._ensureCacheDir()
-    const pValueThreshold = result?.summary?.p_value_threshold ?? payload?.params?.pValueThreshold ?? 0.05
+    const pValueThreshold = result?.summary?.p_value_threshold_applied === false
+      ? null
+      : result?.summary?.p_value_threshold ?? payload?.params?.pValueThreshold ?? 0.05
     const correlationThreshold = result?.summary?.correlation_threshold ?? payload?.params?.correlationThreshold ?? 0
     const correlationMethod = payload?.params?.correlationMethod || 'spearman'
     const datasetType = payload?.params?.datasetType || 'unknown'
@@ -213,13 +218,52 @@ class AnalysisManager {
 
     const raw = await fs.readFile(ref.path, 'utf-8')
     const parsed = JSON.parse(raw)
-    if (parsed.version !== this.cacheVersion) {
+    if (parsed.version === 1) {
+      this._migrateGraphCacheV1(parsed)
+      parsed.version = this.cacheVersion
+      await fs.writeFile(ref.path, JSON.stringify(parsed), 'utf-8')
+    } else if (parsed.version !== this.cacheVersion) {
       throw new Error(`Graph cache version mismatch for key ${cacheKey}`)
     }
     if (!parsed.graph || !Array.isArray(parsed.graph.nodes) || !Array.isArray(parsed.graph.edges)) {
       throw new Error(`Graph cache invalid payload for key ${cacheKey}`)
     }
     return parsed
+  }
+
+  _migrateGraphCacheV1(parsed) {
+    const graph = parsed.graph
+    const method = String(parsed.correlationMethod || 'spearman').toLowerCase()
+    if (method === 'spieceasi') {
+      graph.edges = (graph.edges || []).map((edge) => ({
+        ...edge,
+        p_value: null,
+        weight_type: 'selection_stability',
+        evidence_type: 'stars',
+        selection_method: 'StARS',
+      }))
+      graph.stats = {
+        ...(graph.stats || {}),
+        p_value_threshold: null,
+        p_value_threshold_applied: false,
+        weight_type: 'selection_stability',
+        evidence_type: 'stars',
+        selected_pairs: graph.edges.length,
+      }
+      delete graph.stats.significant_pairs
+      parsed.pValueThreshold = null
+    } else {
+      graph.edges = (graph.edges || []).map((edge) => ({
+        ...edge,
+        weight_type: edge.weight_type || 'correlation',
+        evidence_type: edge.evidence_type || 'pairwise_p_value',
+      }))
+      graph.stats = {
+        ...(graph.stats || {}),
+        p_value_threshold_applied: true,
+        weight_type: 'correlation',
+      }
+    }
   }
 
   /**
@@ -259,10 +303,13 @@ class AnalysisManager {
     const payload = {
       graphData,
       seedNode,
-      targetConductance: options.targetConductance ?? 0.2,
+      targetConductance: options.targetConductance ?? 0.4,
       b: Number.isFinite(options.b) ? options.b : null,
       teleportAlpha: Number.isFinite(options.teleportAlpha) ? options.teleportAlpha : null,
       weighted: options.weighted ?? false,
+      signed: options.signed === true,
+      signLambda: Number.isFinite(options.signLambda) ? options.signLambda : 1.0,
+      parameterOverrides: options.parameterOverrides || null,
     }
 
     await fs.writeFile(inputPath, JSON.stringify(payload), 'utf-8')
@@ -571,17 +618,19 @@ class AnalysisManager {
     )
 
     let backend
-    if (requestedMethod === 'spieceasi' || needsPythonForConditionColumn) {
-      // The frozen backend may lag behind source features. Route SPIEC-EASI (and
-      // non-default condition-column runs) to the Python backend to guarantee
-      // consistent parameter handling.
+    const methodNeedsPortSource = ['spieceasi', 'cclasso', 'spring'].includes(requestedMethod)
+    const useSourcePython = !app.isPackaged && (methodNeedsPortSource || needsPythonForConditionColumn)
+    if (useSourcePython) {
+      // In a source checkout, use the live Python modules so new statistical
+      // methods do not depend on a stale PyInstaller build. Packaged builds use
+      // the frozen backend, whose spec explicitly includes the same methods.
       const interpreter = await this._resolvePythonInterpreter((line) => onLog({ jobId, line }))
       backend = { kind: 'python', command: interpreter }
-      if (requestedMethod === 'spieceasi') {
+      if (methodNeedsPortSource) {
         onLog({
           jobId,
           level: 'info',
-          line: '[info] Running SPIEC-EASI with the Python analysis backend for full method support.',
+          line: `[info] Running ${requestedMethod} with the Python source backend.`,
         })
       }
       if (needsPythonForConditionColumn) {
@@ -592,6 +641,13 @@ class AnalysisManager {
         })
       }
     } else {
+      if (methodNeedsPortSource) {
+        onLog({
+          jobId,
+          level: 'info',
+          line: `[info] Running ${requestedMethod} in the bundled statistical backend.`,
+        })
+      }
       backend = await this._resolveBackend((line) => onLog({ jobId, line }))
     }
     const resultPath = path.join(os.tmpdir(), `result_${jobId}.json`)

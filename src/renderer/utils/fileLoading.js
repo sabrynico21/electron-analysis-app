@@ -117,6 +117,37 @@ export async function parseMetadataConditions(filePath, column = METADATA_CONDIT
 }
 
 /**
+ * Count the distinct sample identifiers across one or more metadata files.
+ *
+ * Used by the taxa-filtering panel to translate a prevalence percentage into an
+ * equivalent minimum number of samples. The first column is the sample id, which
+ * is the same convention the Python loader (`_load_metadata_conditions`) uses.
+ * Files that cannot be read are skipped so a single bad file never breaks the
+ * count.
+ *
+ * @param {string[]} filePaths
+ * @returns {Promise<number>}
+ */
+export async function countMetadataSamples(filePaths = []) {
+  const seen = new Set()
+  for (const filePath of filePaths) {
+    if (!filePath) continue
+    const readResult = await window.electronAPI.readFile(filePath)
+    if (!readResult?.success) continue
+
+    const rows = toRows(readResult.content)
+    if (rows.length < 2) continue
+
+    const delimiter = detectDelimiter(rows[0])
+    for (const row of rows.slice(1)) {
+      const id = row.split(delimiter)[0]?.trim().replace(/^["']|["']$/g, '')
+      if (id) seen.add(id)
+    }
+  }
+  return seen.size
+}
+
+/**
  * Turn a drop event's `DataTransfer` into path entries.
  *
  * **This must run synchronously inside the drop handler.** A `DataTransfer` is
